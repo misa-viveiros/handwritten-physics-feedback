@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server/dev-server.mjs",
+    "dev:vite": "vite",
     "build": "tsc -b && vite build",
+    "check:server": "node --check server/dev-server.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "openai": "^6.9.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
