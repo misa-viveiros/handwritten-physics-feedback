@@ -1,5 +1,6 @@
 import type { ErrorType, FeedbackResult, OverallStatus } from './feedback'
 
+type SuggestedMarkup = FeedbackResult['suggestedMarkup'][number]
 type MarkupType = FeedbackResult['suggestedMarkup'][number]['type']
 
 const overallStatuses = new Set<OverallStatus>([
@@ -27,6 +28,36 @@ const markupTypes = new Set<MarkupType>([
   'underline',
   'arrow',
   'note',
+  'dashed_box',
+  'question_mark',
+  'note_only',
+  'physics_vector',
+])
+const vectorKinds = new Set([
+  'force',
+  'velocity',
+  'acceleration',
+  'displacement',
+  'momentum',
+  'other',
+] as const)
+const noteStyles = new Set<NonNullable<SuggestedMarkup['noteStyle']>>([
+  'handwritten',
+  'compact',
+  'emphasis',
+])
+const notePlacements = new Set<NonNullable<SuggestedMarkup['notePlacement']>>([
+  'auto',
+  'above',
+  'below',
+  'left',
+  'right',
+])
+const markupCategories = new Set<NonNullable<SuggestedMarkup['category']>>([
+  'issue',
+  'hint',
+  'praise',
+  'question',
 ])
 
 export function validateFeedbackResult(value: unknown): FeedbackResult {
@@ -46,7 +77,7 @@ export function validateFeedbackResult(value: unknown): FeedbackResult {
         `transcription.lines[${index}].confidence`,
       ),
       uncertainSymbols:
-        line.uncertainSymbols === undefined
+        line.uncertainSymbols === undefined || line.uncertainSymbols === null
           ? undefined
           : readStringArray(
               line.uncertainSymbols,
@@ -76,27 +107,7 @@ export function validateFeedbackResult(value: unknown): FeedbackResult {
       value.analysisConfidence,
       'analysisConfidence',
     ),
-    suggestedMarkup: readArray(value.suggestedMarkup, 'suggestedMarkup').map(
-      (markupValue, index) => {
-        const markup = readRecord(markupValue, `suggestedMarkup[${index}]`)
-        return {
-          lineId:
-            markup.lineId === undefined
-              ? undefined
-              : readString(markup.lineId, `suggestedMarkup[${index}].lineId`),
-          type: readEnum(
-            markup.type,
-            markupTypes,
-            `suggestedMarkup[${index}].type`,
-          ),
-          targetDescription: readString(
-            markup.targetDescription,
-            `suggestedMarkup[${index}].targetDescription`,
-          ),
-          noteText: readString(markup.noteText, `suggestedMarkup[${index}].noteText`),
-        }
-      },
-    ),
+    suggestedMarkup: normalizeSuggestedMarkup(value.suggestedMarkup),
   }
 
   if (value.firstIssue !== undefined && value.firstIssue !== null) {
@@ -111,7 +122,8 @@ export function validateFeedbackResult(value: unknown): FeedbackResult {
       errorType: readEnum(firstIssue.errorType, errorTypes, 'firstIssue.errorType'),
       explanation: readString(firstIssue.explanation, 'firstIssue.explanation'),
       likelyMisconception:
-        firstIssue.likelyMisconception === undefined
+        firstIssue.likelyMisconception === undefined ||
+        firstIssue.likelyMisconception === null
           ? undefined
           : readString(
               firstIssue.likelyMisconception,
@@ -129,11 +141,11 @@ export function validateFeedbackResult(value: unknown): FeedbackResult {
       const issue = readRecord(issueValue, `secondaryIssues[${index}]`)
       return {
         lineId:
-          issue.lineId === undefined
+          issue.lineId === undefined || issue.lineId === null
             ? undefined
             : readString(issue.lineId, `secondaryIssues[${index}].lineId`),
         quotedWork:
-          issue.quotedWork === undefined
+          issue.quotedWork === undefined || issue.quotedWork === null
             ? undefined
             : readString(issue.quotedWork, `secondaryIssues[${index}].quotedWork`),
         errorType: readEnum(
@@ -150,6 +162,181 @@ export function validateFeedbackResult(value: unknown): FeedbackResult {
   }
 
   return result
+}
+
+function normalizeSuggestedMarkup(value: unknown): SuggestedMarkup[] {
+  const markupValues = readArray(value, 'suggestedMarkup')
+  const usedIds = new Set<string>()
+  const suggestedMarkup: SuggestedMarkup[] = []
+
+  markupValues.forEach((markupValue, index) => {
+    if (!isRecord(markupValue)) {
+      console.warn(`Dropped suggestedMarkup[${index}]: item must be an object.`)
+      return
+    }
+
+    const trimmedId =
+      typeof markupValue.id === 'string' ? markupValue.id.trim() : ''
+    const id =
+      trimmedId && !usedIds.has(trimmedId)
+        ? trimmedId
+        : createFallbackMarkupId(index, usedIds)
+
+    try {
+      const markup = readSuggestedMarkup({ ...markupValue, id }, index)
+      usedIds.add(markup.id)
+      suggestedMarkup.push(markup)
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'item was invalid.'
+      console.warn(`Dropped suggestedMarkup[${index}]: ${reason}`)
+    }
+  })
+
+  return suggestedMarkup
+}
+
+function readSuggestedMarkup(
+  markupValue: unknown,
+  index: number,
+): SuggestedMarkup {
+  const markup = readRecord(markupValue, `suggestedMarkup[${index}]`)
+  const path = `suggestedMarkup[${index}]`
+  const type = readEnum(markup.type, markupTypes, `${path}.type`)
+
+  const result: SuggestedMarkup = {
+    id: readString(markup.id, `${path}.id`),
+    lineId:
+      markup.lineId === undefined || markup.lineId === null
+        ? undefined
+        : readString(markup.lineId, `${path}.lineId`),
+    targetLineId:
+      markup.targetLineId === undefined || markup.targetLineId === null
+        ? undefined
+        : readString(markup.targetLineId, `${path}.targetLineId`),
+    type,
+    targetDescription: readString(
+      markup.targetDescription,
+      `${path}.targetDescription`,
+    ),
+    noteText:
+      markup.noteText === undefined || markup.noteText === null
+        ? undefined
+        : readString(markup.noteText, `${path}.noteText`),
+    noteStyle:
+      markup.noteStyle === undefined || markup.noteStyle === null
+        ? undefined
+        : readEnum(
+            markup.noteStyle,
+            noteStyles,
+            `${path}.noteStyle`,
+          ),
+    notePlacement:
+      markup.notePlacement === undefined || markup.notePlacement === null
+        ? undefined
+        : readEnum(
+            markup.notePlacement,
+            notePlacements,
+            `${path}.notePlacement`,
+          ),
+    notePosition: readOptionalAnchor(
+      markup.notePosition,
+      `${path}.notePosition`,
+    ),
+    showLeader:
+      markup.showLeader === undefined || markup.showLeader === null
+        ? undefined
+        : readBoolean(
+            markup.showLeader,
+            `${path}.showLeader`,
+          ),
+    leaderAnchor: readOptionalAnchor(
+      markup.leaderAnchor,
+      `${path}.leaderAnchor`,
+    ),
+    category:
+      markup.category === undefined || markup.category === null
+        ? undefined
+        : readEnum(
+            markup.category,
+            markupCategories,
+            `${path}.category`,
+          ),
+    region: readOptionalRegion(
+      markup.region,
+      `${path}.region`,
+    ),
+    anchor: readOptionalAnchor(
+      markup.anchor,
+      `${path}.anchor`,
+    ),
+    confidence:
+      markup.confidence === undefined || markup.confidence === null
+        ? undefined
+        : clampNumber(
+            readFiniteNumber(
+              markup.confidence,
+              `${path}.confidence`,
+            ),
+          ),
+  }
+
+  if (type !== 'physics_vector') {
+    return result
+  }
+
+  result.vectorKind = readEnum(
+    markup.vectorKind,
+    vectorKinds,
+    `${path}.vectorKind`,
+  )
+  result.origin = readRequiredPoint(markup.origin, `${path}.origin`)
+  result.endpoint = readOptionalPoint(markup.endpoint, `${path}.endpoint`)
+  result.direction = readOptionalDirection(
+    markup.direction,
+    `${path}.direction`,
+  )
+  result.relativeLength =
+    markup.relativeLength === undefined || markup.relativeLength === null
+      ? undefined
+      : readRelativeLength(markup.relativeLength, `${path}.relativeLength`)
+  result.label =
+    markup.label === undefined || markup.label === null
+      ? undefined
+      : readString(markup.label, `${path}.label`)
+  result.confidence = readConfidence(markup.confidence, `${path}.confidence`)
+
+  const hasEndpoint = Boolean(result.endpoint)
+  const hasDirectionForm = Boolean(
+    result.direction && result.relativeLength !== undefined,
+  )
+  if (!hasEndpoint && !hasDirectionForm) {
+    throw new Error(
+      `${path} requires endpoint or direction with relativeLength.`,
+    )
+  }
+  if (
+    result.endpoint &&
+    result.endpoint.x === result.origin.x &&
+    result.endpoint.y === result.origin.y
+  ) {
+    throw new Error(`${path}.endpoint must differ from origin.`)
+  }
+
+  return result
+}
+
+function createFallbackMarkupId(index: number, usedIds: Set<string>): string {
+  const baseId = `markup-${index + 1}`
+  let id = baseId
+  let suffix = 2
+
+  while (usedIds.has(id)) {
+    id = `${baseId}-${suffix}`
+    suffix += 1
+  }
+
+  return id
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -187,8 +374,18 @@ function readStringArray(value: unknown, path: string): string[] {
 }
 
 function readConfidence(value: unknown, path: string): number {
-  if (typeof value !== 'number' || Number.isNaN(value) || value < 0 || value > 1) {
+  const number = readFiniteNumber(value, path)
+
+  if (number < 0 || number > 1) {
     throw new Error(`${path} must be a number from 0 to 1.`)
+  }
+
+  return number
+}
+
+function readBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new Error(`${path} must be a boolean.`)
   }
 
   return value
@@ -204,4 +401,122 @@ function readEnum<T extends string>(
   }
 
   return value as T
+}
+
+function readOptionalRegion(value: unknown, path: string) {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  let x: number
+  let y: number
+  let width: number
+  let height: number
+
+  try {
+    x = readFiniteNumber(value.x, `${path}.x`)
+    y = readFiniteNumber(value.y, `${path}.y`)
+    width = readFiniteNumber(value.width, `${path}.width`)
+    height = readFiniteNumber(value.height, `${path}.height`)
+  } catch {
+    return undefined
+  }
+
+  if (width <= 0 || height <= 0) {
+    return undefined
+  }
+
+  const clampedX = clampNumber(x)
+  const clampedY = clampNumber(y)
+  const clampedWidth = Math.min(clampNumber(width), 1 - clampedX)
+  const clampedHeight = Math.min(clampNumber(height), 1 - clampedY)
+
+  if (clampedWidth <= 0 || clampedHeight <= 0) {
+    return undefined
+  }
+
+  return {
+    x: clampedX,
+    y: clampedY,
+    width: clampedWidth,
+    height: clampedHeight,
+  }
+}
+
+function readOptionalAnchor(value: unknown, path: string) {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  try {
+    return {
+      x: clampNumber(readFiniteNumber(value.x, `${path}.x`)),
+      y: clampNumber(readFiniteNumber(value.y, `${path}.y`)),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function readRequiredPoint(value: unknown, path: string) {
+  const point = readOptionalPoint(value, path)
+  if (!point) {
+    throw new Error(`${path} must contain normalized x and y coordinates.`)
+  }
+  return point
+}
+
+function readOptionalPoint(value: unknown, path: string) {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  const point = readRecord(value, path)
+  const x = readFiniteNumber(point.x, `${path}.x`)
+  const y = readFiniteNumber(point.y, `${path}.y`)
+  if (x < 0 || x > 1 || y < 0 || y > 1) {
+    throw new Error(`${path} coordinates must be from 0 to 1.`)
+  }
+  return { x, y }
+}
+
+function readOptionalDirection(value: unknown, path: string) {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  const direction = readRecord(value, path)
+  const x = readFiniteNumber(direction.x, `${path}.x`)
+  const y = readFiniteNumber(direction.y, `${path}.y`)
+  const magnitude = Math.hypot(x, y)
+  if (magnitude === 0) {
+    throw new Error(`${path} must not be a zero vector.`)
+  }
+  return { x: x / magnitude, y: y / magnitude }
+}
+
+function readRelativeLength(value: unknown, path: string) {
+  const length = readFiniteNumber(value, path)
+  if (length <= 0 || length > 1) {
+    throw new Error(`${path} must be greater than 0 and no more than 1.`)
+  }
+  return length
+}
+
+function readFiniteNumber(value: unknown, path: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${path} must be a finite number.`)
+  }
+
+  return value
+}
+
+function clampNumber(value: number) {
+  return Math.min(1, Math.max(0, value))
 }
