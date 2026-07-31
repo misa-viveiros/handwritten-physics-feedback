@@ -35,11 +35,26 @@ const markupTypes = new Set<MarkupType>([
 ])
 const vectorKinds = new Set([
   'force',
+  'weight',
+  'normal',
+  'friction',
+  'tension',
+  'applied_force',
+  'net_inward_force',
+  'component',
   'velocity',
   'acceleration',
   'displacement',
   'momentum',
   'other',
+] as const)
+const vectorIssues = new Set([
+  'missing',
+  'extra',
+  'reversed',
+  'mislabeled',
+  'wrong_object',
+  'not_a_force',
 ] as const)
 const noteStyles = new Set<NonNullable<SuggestedMarkup['noteStyle']>>([
   'handwritten',
@@ -279,6 +294,26 @@ function readSuggestedMarkup(
               `${path}.confidence`,
             ),
           ),
+    targetObject:
+      markup.targetObject === undefined || markup.targetObject === null
+        ? undefined
+        : readString(markup.targetObject, `${path}.targetObject`),
+    vectorIssue:
+      markup.vectorIssue === undefined || markup.vectorIssue === null
+        ? undefined
+        : readEnum(
+            markup.vectorIssue,
+            vectorIssues,
+            `${path}.vectorIssue`,
+          ),
+    replacementFor:
+      markup.replacementFor === undefined || markup.replacementFor === null
+        ? undefined
+        : readString(markup.replacementFor, `${path}.replacementFor`),
+    vectorKind:
+      markup.vectorKind === undefined || markup.vectorKind === null
+        ? undefined
+        : readEnum(markup.vectorKind, vectorKinds, `${path}.vectorKind`),
   }
 
   if (type !== 'physics_vector') {

@@ -4,11 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server/dev-server.mjs",
+    "dev": "node server/dev-server.mjs --dev",
     "dev:vite": "vite",
     "build": "tsc -b && vite build",
     "check:server": "node --check server/dev-server.mjs",
     "lint": "eslint .",
+    "test": "node --experimental-strip-types --test server/*.test.mjs",
+    "start": "node server/dev-server.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

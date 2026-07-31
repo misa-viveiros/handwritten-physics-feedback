@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: handwritten-physics-feedback
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.6-luna
+      - key: VITE_STUDY_MODE
+        value: "false"
+      - key: VITE_STUDY_INCLUDE_TRANSCRIPTION
+        value: "false"

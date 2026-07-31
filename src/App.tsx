@@ -39,6 +39,23 @@ import {
   type RevisionComparison,
 } from './revisionComparison'
 import {
+  getRequestedFeedbackLevel,
+  initialAssistanceState,
+  updateAssistanceState,
+  type AssistanceState,
+} from './assistance'
+import {
+  validateWorkedSolution,
+  type WorkedSolution,
+} from './workedSolution'
+import {
+  addStudyEvent,
+  createStudySessionLog,
+  downloadStudyLog,
+  getVectorMetrics,
+  studyModeEnabled,
+} from './studyLog'
+import {
   problemBank,
   type PracticeProblem,
 } from './problems/problemBank'
@@ -56,6 +73,8 @@ type SolutionAttempt = {
   lineStatuses: Record<string, LineReviewStatus | undefined>
   confirmedLines?: ConfirmedLine[]
   diagnosis?: FeedbackResult
+  assistanceState?: AssistanceState
+  workedSolution?: WorkedSolution
   confirmedSnapshot?: string
   contentDirty: boolean
   geometryDirty: boolean
@@ -74,6 +93,7 @@ type ProblemSession = {
 
 const maxImageBytes = 8 * 1024 * 1024
 const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const apiKeyStorageKey = 'handwritten-physics-feedback:openai-api-key'
 
 const statusLabels: Record<OverallStatus, string> = {
   correct: 'Looks consistent',
@@ -104,18 +124,28 @@ const workStatusLabels: Record<HandwritingWorkStatus, string> = {
 function App() {
   const previewUrlsRef = useRef<Set<string>>(new Set())
   const problemInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const apiKeyMenuRef = useRef<HTMLDivElement | null>(null)
+  const studyLogRef = useRef(createStudySessionLog())
+  const studyEditedLinesRef = useRef<Set<string>>(new Set())
+  const [studyTaskId, setStudyTaskId] = useState('')
+  const [apiKey, setApiKey] = useState(readSessionApiKey)
+  const [apiKeyDraft, setApiKeyDraft] = useState(apiKey)
+  const [apiKeyMenuOpen, setApiKeyMenuOpen] = useState(false)
   const [session, setSession] = useState<ProblemSession>(() =>
     createProblemSession(problemBank[0]),
   )
   const [activeLineId, setActiveLineId] = useState<string | null>(null)
   const [activeRequest, setActiveRequest] = useState<
-    'interpreting' | 'diagnosing' | null
+    'interpreting' | 'diagnosing' | 'worked-solution' | null
   >(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null)
   const [pendingProblemChange, setPendingProblemChange] = useState<
     PracticeProblem | 'blank' | null
   >(null)
+  const [workedSolutionConfirmationOpen, setWorkedSolutionConfirmationOpen] =
+    useState(false)
 
   const activeAttempt =
     session.attempts.find(
@@ -135,6 +165,9 @@ function App() {
   const lineStatuses = activeAttempt?.lineStatuses ?? {}
   const confirmedLines = activeAttempt?.confirmedLines ?? []
   const feedback = activeAttempt?.diagnosis
+  const assistanceState =
+    activeAttempt?.assistanceState ?? initialAssistanceState
+  const workedSolution = activeAttempt?.workedSolution
   const diagnosedTranscriptionSnapshot = activeAttempt?.confirmedSnapshot
   const stage = activeAttempt?.stage ?? 'input'
   const hasAnalyzedAttempts = session.attempts.some(
@@ -151,6 +184,73 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!apiKeyMenuOpen) {
+      return
+    }
+
+    function closeMenu(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !apiKeyMenuRef.current?.contains(event.target)
+      ) {
+        setApiKeyMenuOpen(false)
+      }
+    }
+
+    function closeMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setApiKeyMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('pointerdown', closeMenu)
+    window.addEventListener('keydown', closeMenuWithEscape)
+    return () => {
+      window.removeEventListener('pointerdown', closeMenu)
+      window.removeEventListener('keydown', closeMenuWithEscape)
+    }
+  }, [apiKeyMenuOpen])
+
+  function saveApiKey() {
+    const nextApiKey = apiKeyDraft.trim()
+    setApiKey(nextApiKey)
+    writeSessionApiKey(nextApiKey)
+    setApiKeyMenuOpen(false)
+    setNoticeMessage(
+      nextApiKey
+        ? 'API key saved for this browser tab.'
+        : 'This browser tab will use the server API key, if configured.',
+    )
+  }
+
+  function removeApiKey() {
+    setApiKey('')
+    setApiKeyDraft('')
+    writeSessionApiKey('')
+    setApiKeyMenuOpen(false)
+    setNoticeMessage(
+      'Browser API key removed. The server API key will be used if configured.',
+    )
+  }
+
+  function recordStudyEvent(
+    type: string,
+    details?: Record<string, string | number | boolean>,
+  ) {
+    if (studyModeEnabled) {
+      addStudyEvent(studyLogRef.current, type, details)
+    }
+  }
+
+  function exportStudyLog() {
+    studyLogRef.current.taskId = studyTaskId.trim() || session.problemId
+    downloadStudyLog(
+      studyLogRef.current,
+      confirmedLines.map((line) => line.confirmedText),
+    )
+  }
+
   function updateAttemptById(
     attemptId: string,
     updater: (attempt: SolutionAttempt) => SolutionAttempt,
@@ -161,6 +261,20 @@ function App() {
         attempt.id === attemptId ? updater(attempt) : attempt,
       ),
     }))
+  }
+
+  function openImagePicker(mode: 'camera' | 'upload') {
+    const input = imageInputRef.current
+    if (!input || activeRequest !== null || stage !== 'input') {
+      return
+    }
+    input.value = ''
+    if (mode === 'camera') {
+      input.setAttribute('capture', 'environment')
+    } else {
+      input.removeAttribute('capture')
+    }
+    input.click()
   }
 
   async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
@@ -199,12 +313,20 @@ function App() {
       lineStatuses: {},
       confirmedLines: undefined,
       diagnosis: undefined,
+      assistanceState: undefined,
+      workedSolution: undefined,
       confirmedSnapshot: undefined,
       contentDirty: false,
       geometryDirty: false,
       completedAt: undefined,
       stage: 'input',
     }))
+    const uploadTimestamp = new Date().toISOString()
+    studyLogRef.current.metrics.imageUploadTimestamp = uploadTimestamp
+    recordStudyEvent('image_uploaded', {
+      attemptNumber,
+      timestamp: uploadTimestamp,
+    })
     setActiveLineId(null)
 
     if (previousAttempt?.imageFingerprint === nextFingerprint) {
@@ -237,6 +359,8 @@ function App() {
   }
 
   function applyProblemChange(problem: PracticeProblem | 'blank') {
+    studyLogRef.current.metrics.resetActions += 1
+    recordStudyEvent('problem_reset')
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     previewUrlsRef.current.clear()
     setSession(
@@ -294,6 +418,8 @@ function App() {
       return
     }
     revokePreviewUrl(activeAttempt.imageUrl ?? null)
+    studyLogRef.current.metrics.resetActions += 1
+    recordStudyEvent('attempt_reset', { attemptNumber })
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...createAttempt(attempt.attemptNumber, attempt.id),
       createdAt: attempt.createdAt,
@@ -308,6 +434,10 @@ function App() {
       return
     }
     const nextAttempt = createAttempt(session.attempts.length + 1)
+    studyLogRef.current.metrics.revisions += 1
+    recordStudyEvent('revision_started', {
+      attemptNumber: nextAttempt.attemptNumber,
+    })
     setSession((current) => ({
       ...current,
       attempts: [...current.attempts, nextAttempt],
@@ -353,15 +483,14 @@ function App() {
     }
 
     const attemptId = activeAttempt.id
+    const interpretationStartedAt = performance.now()
     setActiveRequest('interpreting')
 
     try {
       const imageBase64 = await readFileAsBase64(imageFile)
       const response = await fetch('/api/interpret-solution', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: createApiHeaders(apiKey),
         body: JSON.stringify({
           problemStatement,
           image: {
@@ -387,6 +516,21 @@ function App() {
           ? payload.interpretation
           : payload
       const nextInterpretation = validateInterpretedSolution(responseData)
+      const interpretationDurationMs = Math.round(
+        performance.now() - interpretationStartedAt,
+      )
+      const uncertainLineCount =
+        nextInterpretation.lines.filter(lineNeedsConfirmation).length
+      studyLogRef.current.metrics.interpretationDurationMs +=
+        interpretationDurationMs
+      studyLogRef.current.metrics.interpretedLines =
+        nextInterpretation.lines.length
+      studyLogRef.current.metrics.uncertainLines = uncertainLineCount
+      recordStudyEvent('interpretation_completed', {
+        durationMs: interpretationDurationMs,
+        lines: nextInterpretation.lines.length,
+        uncertainLines: uncertainLineCount,
+      })
 
       updateAttemptById(attemptId, (attempt) => ({
         ...attempt,
@@ -394,6 +538,8 @@ function App() {
         lineStatuses: createInitialLineStatuses(nextInterpretation),
         confirmedLines: undefined,
         diagnosis: undefined,
+        assistanceState: undefined,
+        workedSolution: undefined,
         confirmedSnapshot: undefined,
         contentDirty: false,
         geometryDirty: false,
@@ -401,6 +547,8 @@ function App() {
         stage: 'interpretation',
       }))
     } catch (error) {
+      studyLogRef.current.metrics.apiFailures += 1
+      recordStudyEvent('api_failure', { stage: 'interpretation' })
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -414,6 +562,12 @@ function App() {
   function updateInterpretationLine(lineId: string, confirmedText: string) {
     if (!activeAttempt) {
       return
+    }
+    const studyEditKey = `${activeAttempt.id}:${lineId}`
+    if (!studyEditedLinesRef.current.has(studyEditKey)) {
+      studyEditedLinesRef.current.add(studyEditKey)
+      studyLogRef.current.metrics.transcriptionEdits += 1
+      recordStudyEvent('transcription_edited')
     }
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
@@ -440,6 +594,8 @@ function App() {
     if (!activeAttempt) {
       return
     }
+    studyLogRef.current.metrics.crossedOutStatusCorrections += 1
+    recordStudyEvent('crossed_out_status_corrected')
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
       interpretation: attempt.interpretation
@@ -472,6 +628,8 @@ function App() {
     if (!activeAttempt || !interpretation) {
       return
     }
+    studyLogRef.current.metrics.resetActions += 1
+    recordStudyEvent('interpretation_edits_reset')
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
       interpretation: attempt.interpretation
@@ -690,6 +848,30 @@ function App() {
       return
     }
 
+    const isNewRevisionAttempt = Boolean(
+      !feedback &&
+        previousAttempt?.diagnosis &&
+        previousAttempt.confirmedSnapshot,
+    )
+    const meaningfulRevision = Boolean(
+      isNewRevisionAttempt &&
+        previousAttempt?.confirmedSnapshot !== nextSnapshot,
+    )
+    const priorAssistance = isNewRevisionAttempt
+      ? previousAttempt?.assistanceState ??
+        (previousAttempt?.diagnosis
+          ? updateAssistanceState({
+              feedback: previousAttempt.diagnosis,
+              meaningfulRevision: false,
+            })
+          : undefined)
+      : activeAttempt.assistanceState
+    const requestedFeedbackLevel = getRequestedFeedbackLevel(
+      priorAssistance,
+      meaningfulRevision,
+    )
+
+    const diagnosisStartedAt = performance.now()
     setActiveRequest('diagnosing')
 
     try {
@@ -700,7 +882,7 @@ function App() {
       const imageBase64 = await readFileAsBase64(imageFile)
       const response = await fetch('/api/diagnose-solution', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: createApiHeaders(apiKey),
         body: JSON.stringify({
           problemStatement,
           image: {
@@ -709,6 +891,7 @@ function App() {
             filename: imageFile.name,
           },
           confirmedLines: nextConfirmedLines,
+          feedbackLevel: requestedFeedbackLevel,
         }),
       })
       const payload: unknown = await response.json().catch(() => null)
@@ -724,10 +907,57 @@ function App() {
       const responseData =
         isRecord(payload) && 'feedback' in payload ? payload.feedback : payload
       const nextFeedback = validateFeedbackResult(responseData)
+      const assistanceComparison =
+        isNewRevisionAttempt &&
+        previousAttempt?.diagnosis &&
+        previousAttempt.confirmedLines
+          ? compareRevisions(
+              previousAttempt.diagnosis,
+              nextFeedback,
+              previousAttempt.confirmedLines,
+              nextConfirmedLines,
+            )
+          : null
+      const nextAssistanceState = {
+        ...updateAssistanceState({
+          previous: priorAssistance,
+          feedback: nextFeedback,
+          comparison: assistanceComparison,
+          meaningfulRevision,
+        }),
+        workedSolutionRevealed: false,
+      }
+      const diagnosisDurationMs = Math.round(
+        performance.now() - diagnosisStartedAt,
+      )
+      const vectorMetrics = getVectorMetrics(nextFeedback)
+      studyLogRef.current.metrics.diagnosisDurationMs += diagnosisDurationMs
+      studyLogRef.current.metrics.feedbackLevelShown =
+        nextAssistanceState.feedbackLevel
+      studyLogRef.current.metrics.coreIssueResolved =
+        assistanceComparison?.originalIssueResolved === 'yes'
+      studyLogRef.current.metrics.workedSolutionUnlocked =
+        nextAssistanceState.workedSolutionUnlocked
+      studyLogRef.current.metrics.vectorAnnotationsProposed +=
+        vectorMetrics.proposed
+      studyLogRef.current.metrics.vectorAnnotationsRendered +=
+        vectorMetrics.rendered
+      studyLogRef.current.metrics.textOnlyVectorFallbacks +=
+        vectorMetrics.textOnlyFallbacks
+      recordStudyEvent('diagnosis_completed', {
+        durationMs: diagnosisDurationMs,
+        feedbackLevel: nextAssistanceState.feedbackLevel,
+        workedSolutionUnlocked:
+          nextAssistanceState.workedSolutionUnlocked,
+        vectorsProposed: vectorMetrics.proposed,
+        vectorsRendered: vectorMetrics.rendered,
+      })
       updateAttemptById(attemptId, (attempt) => ({
         ...attempt,
         confirmedLines: nextConfirmedLines,
         diagnosis: nextFeedback,
+        assistanceState: nextAssistanceState,
+        workedSolution: undefined,
         confirmedSnapshot: nextSnapshot,
         contentDirty: false,
         geometryDirty: false,
@@ -735,10 +965,82 @@ function App() {
         completedAt: new Date().toISOString(),
       }))
     } catch (error) {
+      studyLogRef.current.metrics.apiFailures += 1
+      recordStudyEvent('api_failure', { stage: 'diagnosis' })
       setErrorMessage(
         error instanceof Error
           ? error.message
           : 'Physics feedback could not be prepared. Please try again.',
+      )
+    } finally {
+      setActiveRequest(null)
+    }
+  }
+
+  async function handleGenerateWorkedSolution() {
+    if (
+      !activeAttempt ||
+      !feedback ||
+      confirmedLines.length === 0 ||
+      !assistanceState.workedSolutionUnlocked
+    ) {
+      return
+    }
+
+    setWorkedSolutionConfirmationOpen(false)
+    setErrorMessage(null)
+    setActiveRequest('worked-solution')
+
+    try {
+      const response = await fetch('/api/generate-worked-solution', {
+        method: 'POST',
+        headers: createApiHeaders(apiKey),
+        body: JSON.stringify({
+          problemStatement,
+          confirmedLines,
+          currentDiagnosis: feedback,
+          revisionHistorySummary: createRevisionHistorySummary(
+            session.attempts,
+          ),
+          diagramInterpretation: createDiagramInterpretation(feedback),
+          attemptsForCurrentIssue:
+            assistanceState.attemptsForCurrentIssue,
+          workedSolutionUnlocked:
+            assistanceState.workedSolutionUnlocked,
+        }),
+      })
+      const payload: unknown = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        const message =
+          isRecord(payload) && typeof payload.error === 'string'
+            ? payload.error
+            : 'The worked solution could not be prepared. Please try again.'
+        throw new Error(message)
+      }
+
+      const responseData =
+        isRecord(payload) && 'workedSolution' in payload
+          ? payload.workedSolution
+          : payload
+      const nextWorkedSolution = validateWorkedSolution(responseData)
+      studyLogRef.current.metrics.workedSolutionRevealed = true
+      recordStudyEvent('worked_solution_revealed')
+      updateAttemptById(activeAttempt.id, (attempt) => ({
+        ...attempt,
+        workedSolution: nextWorkedSolution,
+        assistanceState: {
+          ...(attempt.assistanceState ?? assistanceState),
+          workedSolutionRevealed: true,
+        },
+      }))
+    } catch (error) {
+      studyLogRef.current.metrics.apiFailures += 1
+      recordStudyEvent('api_failure', { stage: 'worked_solution' })
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'The worked solution could not be prepared. Please try again.',
       )
     } finally {
       setActiveRequest(null)
@@ -760,10 +1062,94 @@ function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
-        <h1>Handwritten Physics Feedback</h1>
-        <p className="subtitle">
-          Upload a handwritten solution and get revision-oriented feedback.
-        </p>
+        <div className="header-title">
+          <h1>Handwritten Physics Feedback</h1>
+          <p className="subtitle">
+            Upload a handwritten solution and get revision-oriented feedback.
+          </p>
+        </div>
+        <div className="api-key-menu" ref={apiKeyMenuRef}>
+          <button
+            aria-expanded={apiKeyMenuOpen}
+            aria-haspopup="dialog"
+            aria-label="Open settings menu"
+            className="menu-button"
+            onClick={() => {
+              setApiKeyDraft(apiKey)
+              setApiKeyMenuOpen((open) => !open)
+            }}
+            title="Settings"
+            type="button"
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          {apiKeyMenuOpen && (
+            <section
+              aria-label="API key settings"
+              className="api-key-panel"
+              role="dialog"
+            >
+              <div className="api-key-panel-heading">
+                <div>
+                  <h2>API key</h2>
+                  <p>{apiKey ? 'A browser key is set.' : 'No browser key set.'}</p>
+                </div>
+                <button
+                  aria-label="Close settings"
+                  className="close-menu-button"
+                  onClick={() => setApiKeyMenuOpen(false)}
+                  type="button"
+                >
+                  &times;
+                </button>
+              </div>
+              <label htmlFor="openai-api-key">OpenAI API key</label>
+              <input
+                autoComplete="off"
+                id="openai-api-key"
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                placeholder="sk-..."
+                spellCheck={false}
+                type="password"
+                value={apiKeyDraft}
+              />
+              <p className="api-key-safety">
+                Stored only for this browser tab and sent to this app's
+                backend when you analyze work. Use only on a trusted copy of
+                the project.
+              </p>
+              <div className="api-key-actions">
+                {apiKey && (
+                  <button
+                    className="remove-api-key-button"
+                    onClick={removeApiKey}
+                    type="button"
+                  >
+                    Remove key
+                  </button>
+                )}
+                <button
+                  className="save-api-key-button"
+                  onClick={saveApiKey}
+                  type="button"
+                >
+                  Save for this tab
+                </button>
+              </div>
+              {studyModeEnabled && (
+                <button
+                  className="export-study-log-button"
+                  onClick={exportStudyLog}
+                  type="button"
+                >
+                  Export session log
+                </button>
+              )}
+            </section>
+          )}
+        </div>
       </header>
 
       <section className="workspace" aria-label="Physics feedback workspace">
@@ -799,6 +1185,18 @@ function App() {
             </button>
           </div>
 
+          {studyModeEnabled && (
+            <label className="study-task-field" htmlFor="study-task-id">
+              Study task ID
+              <input
+                id="study-task-id"
+                onChange={(event) => setStudyTaskId(event.target.value)}
+                placeholder={session.problemId ?? 'task-id'}
+                value={studyTaskId}
+              />
+            </label>
+          )}
+
           <label className="field-label" htmlFor="problem-statement">
             Problem statement
           </label>
@@ -811,23 +1209,42 @@ function App() {
             rows={7}
           />
 
-          <label className="upload-box" htmlFor="solution-image">
+          <div className="image-source-picker">
             <span className="upload-title">
               {attemptNumber > 1
                 ? 'Upload revised handwritten solution'
-                : 'Upload handwritten solution'}
+                : 'Add handwritten solution'}
             </span>
             <span className="upload-detail">
               {imageName || 'Choose a JPG, PNG, or WEBP image'}
             </span>
+            <div className="image-source-actions">
+              <button
+                disabled={stage !== 'input' || activeRequest !== null}
+                onClick={() => openImagePicker('camera')}
+                type="button"
+              >
+                Take photo
+              </button>
+              <button
+                disabled={stage !== 'input' || activeRequest !== null}
+                onClick={() => openImagePicker('upload')}
+                type="button"
+              >
+                Upload image
+              </button>
+            </div>
             <input
+              aria-label="Choose handwritten solution image"
+              className="image-file-input"
               id="solution-image"
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/*"
               onChange={handleImageChange}
               disabled={stage !== 'input' || activeRequest !== null}
+              ref={imageInputRef}
             />
-          </label>
+          </div>
 
           <p className="privacy-notice">
             This research prototype sends the uploaded image and problem
@@ -882,13 +1299,21 @@ function App() {
             Try a different problem
           </button>
 
-          {activeRequest && (
-            <div className="loading-message" aria-live="polite">
-              {activeRequest === 'interpreting'
-                ? 'Reading only what is written. Physics feedback remains hidden.'
-                : 'Preparing feedback from the confirmed transcription.'}
-            </div>
-          )}
+          <div
+            aria-hidden={!activeRequest}
+            aria-live="polite"
+            className={`loading-message ${activeRequest ? '' : 'idle'}`}
+          >
+            {activeRequest === 'interpreting'
+              ? 'Reading your handwriting...'
+              : activeRequest === 'worked-solution'
+                ? 'Preparing a worked solution...'
+                : activeRequest === 'diagnosing' && attemptNumber > 1
+                  ? 'Comparing your revision...'
+                  : activeRequest === 'diagnosing'
+                    ? 'Checking the physics reasoning...'
+                    : 'Analysis status'}
+          </div>
 
           <div className="preview-area">
             <div className="preview-frame">
@@ -946,14 +1371,22 @@ function App() {
           {stage === 'feedback' && feedback && interpretation ? (
             <FeedbackPanel
               activeLineId={activeLineId}
+              assistanceState={assistanceState}
               key={activeAttempt?.id}
               comparison={revisionComparison}
               feedback={feedback}
               imagePreviewUrl={imagePreviewUrl}
               isAnalyzing={activeRequest !== null}
+              isPreparingWorkedSolution={
+                activeRequest === 'worked-solution'
+              }
               interpretation={interpretation}
               confirmedLines={confirmedLines}
               originalFeedback={previousAttempt?.diagnosis}
+              workedSolution={workedSolution}
+              onRequestWorkedSolution={() =>
+                setWorkedSolutionConfirmationOpen(true)
+              }
               onTryAgain={tryAgain}
               onTryDifferentProblem={() => requestProblemChange('blank')}
               onReviewInterpretation={() => {
@@ -1020,7 +1453,11 @@ function App() {
             <div>
               <button
                 type="button"
-                onClick={() => setPendingProblemChange(null)}
+                onClick={() => {
+                  studyLogRef.current.metrics.cancelActions += 1
+                  recordStudyEvent('problem_change_cancelled')
+                  setPendingProblemChange(null)
+                }}
               >
                 Cancel
               </button>
@@ -1030,6 +1467,40 @@ function App() {
                 onClick={() => applyProblemChange(pendingProblemChange)}
               >
                 Start different problem
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {workedSolutionConfirmationOpen && (
+        <div className="confirmation-backdrop">
+          <section
+            aria-labelledby="worked-solution-confirmation-title"
+            aria-modal="true"
+            className="confirmation-dialog"
+            role="dialog"
+          >
+            <h2 id="worked-solution-confirmation-title">
+              View the worked solution?
+            </h2>
+            <p>This will show the complete reasoning and answer.</p>
+            <div>
+              <button
+                onClick={() => {
+                  studyLogRef.current.metrics.cancelActions += 1
+                  recordStudyEvent('worked_solution_cancelled')
+                  setWorkedSolutionConfirmationOpen(false)
+                }}
+                type="button"
+              >
+                Keep revising
+              </button>
+              <button
+                className="confirm-worked-solution-button"
+                onClick={handleGenerateWorkedSolution}
+                type="button"
+              >
+                Show complete solution
               </button>
             </div>
           </section>
@@ -1481,7 +1952,9 @@ function ConfirmationWorkspace({
             disabled={!allReviewed || isDiagnosing}
             onClick={onContinue}
           >
-            {isDiagnosing ? 'Preparing feedback...' : 'Continue to feedback'}
+            {isDiagnosing
+              ? 'Checking the physics reasoning...'
+              : 'Continue to feedback'}
           </button>
         </div>
         {sortedLines.length === 0 && (
@@ -1544,26 +2017,34 @@ function AttemptHistory({
 
 function FeedbackPanel({
   activeLineId,
+  assistanceState,
   comparison,
   feedback,
   imagePreviewUrl,
   isAnalyzing,
+  isPreparingWorkedSolution,
   interpretation,
   confirmedLines,
   originalFeedback,
+  workedSolution,
+  onRequestWorkedSolution,
   onTryAgain,
   onTryDifferentProblem,
   onReviewInterpretation,
   onSelectedLineChange,
 }: {
   activeLineId: string | null
+  assistanceState: AssistanceState
   comparison: RevisionComparison | null
   feedback: FeedbackResult
   imagePreviewUrl: string | null
   isAnalyzing: boolean
+  isPreparingWorkedSolution: boolean
   interpretation: InterpretedSolution
   confirmedLines: ConfirmedLine[]
   originalFeedback?: FeedbackResult
+  workedSolution?: WorkedSolution
+  onRequestWorkedSolution: () => void
   onTryAgain: () => void
   onTryDifferentProblem: () => void
   onReviewInterpretation: () => void
@@ -1815,14 +2296,78 @@ function FeedbackPanel({
         </details>
       </div>
 
-      <section className="feedback-section full-solution-placeholder">
-        <h3>Show full solution</h3>
-        <p>
-          Full solutions are intentionally paused in this prototype. The system
-          should prioritize targeted hints and revision steps before revealing a
-          worked solution.
-        </p>
+      <section className="feedback-section assistance-card">
+        <div className="assistance-heading">
+          <div>
+            <p className="section-kicker">Progressive assistance</p>
+            <h3>Feedback level {assistanceState.feedbackLevel}</h3>
+          </div>
+          <span>
+            {assistanceState.attemptsForCurrentIssue} issue revision
+            {assistanceState.attemptsForCurrentIssue === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        {workedSolution && assistanceState.workedSolutionRevealed ? (
+          <WorkedSolutionView solution={workedSolution} />
+        ) : assistanceState.workedSolutionUnlocked ? (
+          <div className="worked-solution-unlocked">
+            <p>
+              You have revised this same issue twice. A complete worked
+              solution is now available, but it will stay hidden until you
+              choose to view it.
+            </p>
+            <button
+              disabled={isAnalyzing}
+              onClick={onRequestWorkedSolution}
+              type="button"
+            >
+              {isPreparingWorkedSolution
+                ? 'Preparing a worked solution...'
+                : 'View worked solution'}
+            </button>
+          </div>
+        ) : (
+          <p>
+            {assistanceState.feedbackLevel === 1
+              ? 'Start with the conceptual hint, then revise your own work.'
+              : 'This guidance is more explicit, but the complete solution remains hidden.'}
+          </p>
+        )}
       </section>
+    </div>
+  )
+}
+
+function WorkedSolutionView({ solution }: { solution: WorkedSolution }) {
+  return (
+    <div className="worked-solution" aria-label="Worked solution">
+      <p className="worked-solution-separation">
+        Worked example, separate from your uploaded work
+      </p>
+      <ol>
+        {solution.steps.map((step, index) => (
+          <li key={`${step.title}-${index}`}>
+            <h4>{step.title}</h4>
+            <p>{step.explanation}</p>
+            {step.equation && <code>{step.equation}</code>}
+            {step.substitution && <code>{step.substitution}</code>}
+            {step.units && <small>Units: {step.units}</small>}
+          </li>
+        ))}
+      </ol>
+      {solution.diagramExplanation && (
+        <div className="worked-diagram-explanation">
+          <h4>Diagram reasoning</h4>
+          <p>{solution.diagramExplanation}</p>
+        </div>
+      )}
+      <p className="worked-final-answer">
+        <strong>Final answer:</strong> {solution.finalAnswer}
+      </p>
+      {solution.limitations.length > 0 && (
+        <small>{solution.limitations.join(' ')}</small>
+      )}
     </div>
   )
 }
@@ -1893,6 +2438,46 @@ function RevisionProgress({
   )
 }
 
+function createRevisionHistorySummary(attempts: SolutionAttempt[]): string {
+  return attempts
+    .filter((attempt) => attempt.diagnosis)
+    .map(
+      (attempt) =>
+        `Attempt ${attempt.attemptNumber}: ${
+          attempt.diagnosis?.overallStatus
+        }; first issue: ${
+          attempt.diagnosis?.firstIssue?.explanation ?? 'none'
+        }; assistance level: ${
+          attempt.assistanceState?.feedbackLevel ?? 1
+        }`,
+    )
+    .join('\n')
+}
+
+function createDiagramInterpretation(feedback: FeedbackResult): string {
+  const diagramMarkup = feedback.suggestedMarkup
+    .filter(
+      (markup) =>
+        markup.type === 'physics_vector' ||
+        markup.vectorIssue ||
+        markup.targetObject,
+    )
+    .map((markup) => ({
+      type: markup.type,
+      vectorKind: markup.vectorKind,
+      vectorIssue: markup.vectorIssue,
+      targetObject: markup.targetObject,
+      label: markup.label,
+      targetDescription: markup.targetDescription,
+      noteText: markup.noteText,
+      confidence: markup.confidence,
+    }))
+
+  return diagramMarkup.length > 0
+    ? JSON.stringify(diagramMarkup)
+    : 'No localized free-body-diagram interpretation was available.'
+}
+
 function createAttempt(
   attemptNumber: number,
   id: string = crypto.randomUUID(),
@@ -1935,6 +2520,33 @@ function validateImageFile(file: File): string | null {
   }
 
   return null
+}
+
+function createApiHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...(apiKey ? { 'X-OpenAI-API-Key': apiKey } : {}),
+  }
+}
+
+function readSessionApiKey(): string {
+  try {
+    return window.sessionStorage.getItem(apiKeyStorageKey)?.trim() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function writeSessionApiKey(apiKey: string) {
+  try {
+    if (apiKey) {
+      window.sessionStorage.setItem(apiKeyStorageKey, apiKey)
+    } else {
+      window.sessionStorage.removeItem(apiKeyStorageKey)
+    }
+  } catch {
+    // Analysis still works with the in-memory value when storage is blocked.
+  }
 }
 
 function readFileAsBase64(file: File): Promise<string> {

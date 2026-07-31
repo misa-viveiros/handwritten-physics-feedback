@@ -30,11 +30,26 @@ const markupTypes = new Set([
 ])
 const vectorKinds = new Set([
   'force',
+  'weight',
+  'normal',
+  'friction',
+  'tension',
+  'applied_force',
+  'net_inward_force',
+  'component',
   'velocity',
   'acceleration',
   'displacement',
   'momentum',
   'other',
+])
+const vectorIssues = new Set([
+  'missing',
+  'extra',
+  'reversed',
+  'mislabeled',
+  'wrong_object',
+  'not_a_force',
 ])
 const noteStyles = new Set(['handwritten', 'compact', 'emphasis'])
 const notePlacements = new Set(['auto', 'above', 'below', 'left', 'right'])
@@ -167,6 +182,9 @@ export const feedbackJsonSchema = {
           'direction',
           'relativeLength',
           'label',
+          'targetObject',
+          'vectorIssue',
+          'replacementFor',
         ],
         properties: {
           lineId: {
@@ -317,6 +335,18 @@ export const feedbackJsonSchema = {
             ],
           },
           label: {
+            anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
+          },
+          targetObject: {
+            anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
+          },
+          vectorIssue: {
+            anyOf: [
+              { type: 'string', enum: [...vectorIssues] },
+              { type: 'null' },
+            ],
+          },
+          replacementFor: {
             anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
           },
         },
@@ -570,6 +600,26 @@ function readSuggestedMarkup(markupValue, index) {
               `${path}.confidence`,
             ),
           ),
+    targetObject:
+      markup.targetObject === undefined || markup.targetObject === null
+        ? undefined
+        : readString(markup.targetObject, `${path}.targetObject`),
+    vectorIssue:
+      markup.vectorIssue === undefined || markup.vectorIssue === null
+        ? undefined
+        : readEnum(
+            markup.vectorIssue,
+            vectorIssues,
+            `${path}.vectorIssue`,
+          ),
+    replacementFor:
+      markup.replacementFor === undefined || markup.replacementFor === null
+        ? undefined
+        : readString(markup.replacementFor, `${path}.replacementFor`),
+    vectorKind:
+      markup.vectorKind === undefined || markup.vectorKind === null
+        ? undefined
+        : readEnum(markup.vectorKind, vectorKinds, `${path}.vectorKind`),
   }
 
   if (type !== 'physics_vector') {

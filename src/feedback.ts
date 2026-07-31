@@ -49,11 +49,26 @@ export type FeedbackResult = {
 
 export type PhysicsVectorKind =
   | 'force'
+  | 'weight'
+  | 'normal'
+  | 'friction'
+  | 'tension'
+  | 'applied_force'
+  | 'net_inward_force'
+  | 'component'
   | 'velocity'
   | 'acceleration'
   | 'displacement'
   | 'momentum'
   | 'other'
+
+export type FbdVectorIssue =
+  | 'missing'
+  | 'extra'
+  | 'reversed'
+  | 'mislabeled'
+  | 'wrong_object'
+  | 'not_a_force'
 
 export type PhysicsVectorMarkup = SuggestedMarkup & {
   type: 'physics_vector'
@@ -128,4 +143,7 @@ export type SuggestedMarkup = {
   }
   relativeLength?: number
   label?: string
+  targetObject?: string
+  vectorIssue?: FbdVectorIssue
+  replacementFor?: string
 }

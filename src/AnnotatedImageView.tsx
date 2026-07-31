@@ -735,9 +735,29 @@ function getPhysicsVectorPoints(annotation: PhysicsVectorMarkup) {
     return undefined
   }
 
+  const origin = mapPointToPage(annotation.origin)
+  const endpoint = mapPointToPage(rawEndpoint)
+  if (!annotation.replacementFor) {
+    return { origin, endpoint }
+  }
+
+  const dx = endpoint.x - origin.x
+  const dy = endpoint.y - origin.y
+  const magnitude = Math.hypot(dx, dy) || 1
+  const offset = {
+    x: (-dy / magnitude) * 0.012,
+    y: (dx / magnitude) * 0.012,
+  }
+
   return {
-    origin: mapPointToPage(annotation.origin),
-    endpoint: mapPointToPage(rawEndpoint),
+    origin: {
+      x: clamp(origin.x + offset.x, pageStart, pageEnd),
+      y: clamp(origin.y + offset.y),
+    },
+    endpoint: {
+      x: clamp(endpoint.x + offset.x, pageStart, pageEnd),
+      y: clamp(endpoint.y + offset.y),
+    },
   }
 }
 

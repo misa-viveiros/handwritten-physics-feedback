@@ -4,6 +4,7 @@ import {
   normalizeFeedbackResult,
   validateFeedbackResult,
 } from './feedback-schema.mjs'
+import { fbdFixtures } from './fbd-fixtures.mjs'
 
 const baseFeedback = (suggestedMarkup) => ({
   transcription: {
@@ -31,7 +32,9 @@ test('accepts a leftward missing-friction vector with an endpoint', () => {
     baseFeedback([
       {
         type: 'physics_vector',
-        vectorKind: 'force',
+        vectorKind: 'friction',
+        vectorIssue: 'missing',
+        targetObject: 'box',
         origin: { x: 0.52, y: 0.58 },
         endpoint: { x: 0.34, y: 0.58 },
         label: 'f_k',
@@ -48,7 +51,7 @@ test('accepts a leftward missing-friction vector with an endpoint', () => {
 
   assert.equal(vector.id, 'markup-1')
   assert.equal(vector.type, 'physics_vector')
-  assert.equal(vector.vectorKind, 'force')
+  assert.equal(vector.vectorKind, 'friction')
   assert.deepEqual(vector.origin, { x: 0.52, y: 0.58 })
   assert.deepEqual(vector.endpoint, { x: 0.34, y: 0.58 })
   assert.equal(vector.label, 'f_k')
@@ -81,7 +84,9 @@ test('preserves invalid vector geometry as text-only feedback', () => {
     baseFeedback([
       {
         type: 'physics_vector',
-        vectorKind: 'force',
+        vectorKind: 'friction',
+        vectorIssue: 'missing',
+        targetObject: 'box',
         origin: { x: 0.52, y: 0.58 },
         noteText: 'Add friction opposite the motion.',
         targetDescription: 'Exact friction-vector placement is uncertain',
@@ -94,5 +99,54 @@ test('preserves invalid vector geometry as text-only feedback', () => {
 
   assert.equal(markup.type, 'note_only')
   assert.equal(markup.noteText, 'Add friction opposite the motion.')
+  assert.equal(markup.vectorKind, 'friction')
+  assert.equal(markup.vectorIssue, 'missing')
+  assert.equal(markup.targetObject, 'box')
   assert.match(reports[0].reason, /preserved as text-only feedback/)
+})
+
+test('validates all bounded FBD fixtures', () => {
+  for (const fixture of Object.values(fbdFixtures)) {
+    const feedback = validateFeedbackResult(
+      normalizeFeedbackResult(fixture.feedback),
+    )
+    assert.equal(feedback.firstIssue.errorType, 'diagram')
+    assert.equal(feedback.suggestedMarkup.length, 1)
+    assert.ok(feedback.suggestedMarkup[0].targetObject)
+    assert.ok(feedback.suggestedMarkup[0].vectorIssue)
+  }
+})
+
+test('keeps extra-force and wrong-object feedback non-vector', () => {
+  for (const fixture of [
+    fbdFixtures.extraThirdLawForce,
+    fbdFixtures.twoBlocksOneRope,
+    fbdFixtures.circularExtraForce,
+  ]) {
+    const markup = validateFeedbackResult(
+      normalizeFeedbackResult(fixture.feedback),
+    ).suggestedMarkup[0]
+    assert.notEqual(markup.type, 'physics_vector')
+  }
+})
+
+test('preserves object-specific metadata in multiple-object diagrams', () => {
+  const markup = validateFeedbackResult(
+    normalizeFeedbackResult(fbdFixtures.twoBlocksOneRope.feedback),
+  ).suggestedMarkup[0]
+
+  assert.equal(markup.vectorKind, 'tension')
+  assert.equal(markup.vectorIssue, 'wrong_object')
+  assert.equal(markup.targetObject, 'right block')
+})
+
+test('offset replacement metadata is required by the incline fixture', () => {
+  const markup = validateFeedbackResult(
+    normalizeFeedbackResult(fbdFixtures.inclineNormal.feedback),
+  ).suggestedMarkup[0]
+
+  assert.equal(markup.type, 'physics_vector')
+  assert.equal(markup.vectorKind, 'normal')
+  assert.equal(markup.vectorIssue, 'reversed')
+  assert.match(markup.replacementFor, /student normal/)
 })

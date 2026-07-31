@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer'
+import { createReadStream } from 'node:fs'
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { createServer as createViteServer } from 'vite'
+import { readFile, stat } from 'node:fs/promises'
+import { dirname, extname, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   feedbackJsonSchema,
   normalizeFeedbackResult,
@@ -13,23 +14,51 @@ import {
   normalizeAndValidateInterpretation,
   validateConfirmedLines,
 } from './interpretation-schema.mjs'
+import {
+  validateWorkedSolution,
+  workedSolutionJsonSchema,
+} from './worked-solution-schema.mjs'
 
 const maxImageBytes = 8 * 1024 * 1024
 const maxJsonBytes = 12 * 1024 * 1024
 const supportedMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const defaultModel = 'gpt-5.6-luna'
+const serverDirectory = dirname(fileURLToPath(import.meta.url))
+const projectRoot = resolve(serverDirectory, '..')
+const distDirectory = resolve(projectRoot, 'dist')
+const developmentMode = process.argv.includes('--dev')
+const staticMimeTypes = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.gif', 'image/gif'],
+  ['.html', 'text/html; charset=utf-8'],
+  ['.ico', 'image/x-icon'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.map', 'application/json; charset=utf-8'],
+  ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml'],
+  ['.txt', 'text/plain; charset=utf-8'],
+  ['.webp', 'image/webp'],
+  ['.woff', 'font/woff'],
+  ['.woff2', 'font/woff2'],
+])
 
 await loadLocalEnv()
 
 const port = Number(process.env.PORT) || 5174
-
-const vite = await createViteServer({
-  server: { middlewareMode: true },
-  appType: 'spa',
-})
+const vite = developmentMode
+  ? await createDevelopmentViteServer()
+  : undefined
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host}`)
+
+  if (request.method === 'GET' && url.pathname === '/api/health') {
+    sendJson(response, 200, { ok: true })
+    return
+  }
 
   if (request.method === 'POST' && url.pathname === '/api/analyze-solution') {
     await handleAnalyzeSolution(request, response)
@@ -46,25 +75,140 @@ const server = createServer(async (request, response) => {
     return
   }
 
-  vite.middlewares(request, response, () => {
+  if (
+    request.method === 'POST' &&
+    url.pathname === '/api/generate-worked-solution'
+  ) {
+    await handleGenerateWorkedSolution(request, response)
+    return
+  }
+
+  if (url.pathname.startsWith('/api/')) {
     sendJson(response, 404, { error: 'Not found.' })
-  })
+    return
+  }
+
+  if (vite) {
+    vite.middlewares(request, response, () => {
+      sendJson(response, 404, { error: 'Not found.' })
+    })
+    return
+  }
+
+  await serveProductionFrontend(request, response, url.pathname)
 })
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Local app and API: http://127.0.0.1:${port}`)
+server.listen(port, '0.0.0.0', () => {
+  const mode = developmentMode ? 'development' : 'production'
+  console.log(
+    `Handwritten Physics Feedback (${mode}) listening on http://0.0.0.0:${port}`,
+  )
 })
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    console.log(`${signal} received; closing the web service.`)
+    server.close(async (error) => {
+      if (vite) {
+        await vite.close()
+      }
+      if (error) {
+        console.error('Server shutdown failed:', formatError(error))
+        process.exitCode = 1
+      }
+    })
+  })
+}
+
+async function createDevelopmentViteServer() {
+  const { createServer: createViteServer } = await import('vite')
+  return createViteServer({
+    root: projectRoot,
+    server: { middlewareMode: true },
+    appType: 'spa',
+  })
+}
+
+async function serveProductionFrontend(request, response, pathname) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    sendJson(response, 404, { error: 'Not found.' })
+    return
+  }
+
+  let decodedPath
+  try {
+    decodedPath = decodeURIComponent(pathname)
+  } catch {
+    sendJson(response, 400, { error: 'Invalid URL path.' })
+    return
+  }
+
+  const requestedPath = resolve(distDirectory, `.${decodedPath}`)
+  if (!isPathInsideDist(requestedPath)) {
+    sendJson(response, 403, { error: 'Forbidden path.' })
+    return
+  }
+
+  if (decodedPath !== '/') {
+    try {
+      const fileStats = await stat(requestedPath)
+      if (fileStats.isFile()) {
+        await sendStaticFile(request, response, requestedPath, fileStats.size)
+        return
+      }
+    } catch {
+      // Client-side routes fall through to the SPA entry point.
+    }
+  }
+
+  const indexPath = resolve(distDirectory, 'index.html')
+  try {
+    const indexStats = await stat(indexPath)
+    await sendStaticFile(request, response, indexPath, indexStats.size, true)
+  } catch {
+    sendJson(response, 503, {
+      error: 'Frontend build not found. Run npm run build before npm start.',
+    })
+  }
+}
+
+function isPathInsideDist(filePath) {
+  const normalizedDist = `${distDirectory.toLowerCase()}${sep}`
+  const normalizedFile = filePath.toLowerCase()
+  return (
+    normalizedFile === distDirectory.toLowerCase() ||
+    normalizedFile.startsWith(normalizedDist)
+  )
+}
+
+async function sendStaticFile(
+  request,
+  response,
+  filePath,
+  fileSize,
+  isSpaEntry = false,
+) {
+  response.writeHead(200, {
+    'Cache-Control': isSpaEntry
+      ? 'no-cache'
+      : 'public, max-age=31536000, immutable',
+    'Content-Length': fileSize,
+    'Content-Type':
+      staticMimeTypes.get(extname(filePath).toLowerCase()) ??
+      'application/octet-stream',
+  })
+
+  if (request.method === 'HEAD') {
+    response.end()
+    return
+  }
+
+  createReadStream(filePath).pipe(response)
+}
 
 async function handleAnalyzeSolution(request, response) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      sendJson(response, 500, {
-        error:
-          'OpenAI API key is missing. Add OPENAI_API_KEY to .env, then restart the dev server.',
-      })
-      return
-    }
-
+    const apiKey = requireApiKey(request)
     const body = await readJsonBody(request)
     const problemStatement = readRequiredString(
       body.problemStatement,
@@ -76,6 +220,7 @@ async function handleAnalyzeSolution(request, response) {
       problemStatement,
       imageBase64: image.base64,
       mimeType: image.mimeType,
+      apiKey,
     })
 
     sendJson(response, 200, { feedback })
@@ -87,7 +232,7 @@ async function handleAnalyzeSolution(request, response) {
 
 async function handleInterpretSolution(request, response) {
   try {
-    requireApiKey()
+    const apiKey = requireApiKey(request)
     const body = await readJsonBody(request)
     const problemStatement = readRequiredString(
       body.problemStatement,
@@ -98,6 +243,7 @@ async function handleInterpretSolution(request, response) {
       problemStatement,
       imageBase64: image.base64,
       mimeType: image.mimeType,
+      apiKey,
     })
 
     sendJson(response, 200, { interpretation })
@@ -109,7 +255,7 @@ async function handleInterpretSolution(request, response) {
 
 async function handleDiagnoseSolution(request, response) {
   try {
-    requireApiKey()
+    const apiKey = requireApiKey(request)
     const body = await readJsonBody(request)
     const problemStatement = readRequiredString(
       body.problemStatement,
@@ -117,14 +263,64 @@ async function handleDiagnoseSolution(request, response) {
     )
     const image = readImagePayload(body.image)
     const confirmedLines = validateConfirmedLines(body.confirmedLines)
+    const feedbackLevel = readFeedbackLevel(body.feedbackLevel)
     const feedback = await analyzeWithOpenAI({
       problemStatement,
       imageBase64: image.base64,
       mimeType: image.mimeType,
       confirmedLines,
+      apiKey,
+      feedbackLevel,
     })
 
     sendJson(response, 200, { feedback })
+  } catch (error) {
+    const apiError = normalizeError(error)
+    sendJson(response, apiError.status, { error: apiError.message })
+  }
+}
+
+async function handleGenerateWorkedSolution(request, response) {
+  try {
+    const apiKey = requireApiKey(request)
+    const body = await readJsonBody(request)
+    const problemStatement = readRequiredString(
+      body.problemStatement,
+      'problemStatement',
+    )
+    const confirmedLines = validateConfirmedLines(body.confirmedLines)
+    const currentDiagnosis = validateFeedbackResult(
+      normalizeFeedbackResult(body.currentDiagnosis),
+    )
+    const revisionHistorySummary = readRequiredString(
+      body.revisionHistorySummary,
+      'revisionHistorySummary',
+    )
+    const diagramInterpretation = readRequiredString(
+      body.diagramInterpretation,
+      'diagramInterpretation',
+    )
+    const attemptsForCurrentIssue = readNonNegativeInteger(
+      body.attemptsForCurrentIssue,
+      'attemptsForCurrentIssue',
+    )
+
+    if (attemptsForCurrentIssue < 2 || body.workedSolutionUnlocked !== true) {
+      throw createHttpError(
+        403,
+        'A worked solution is available only after two unsuccessful revisions of the same issue.',
+      )
+    }
+
+    const workedSolution = await generateWorkedSolutionWithOpenAI({
+      apiKey,
+      problemStatement,
+      confirmedLines,
+      currentDiagnosis,
+      revisionHistorySummary,
+      diagramInterpretation,
+    })
+    sendJson(response, 200, { workedSolution })
   } catch (error) {
     const apiError = normalizeError(error)
     sendJson(response, apiError.status, { error: apiError.message })
@@ -135,6 +331,7 @@ async function interpretWithOpenAI({
   problemStatement,
   imageBase64,
   mimeType,
+  apiKey,
 }) {
   const completion = await requestStructuredOutput({
     instructions: interpretationInstructions,
@@ -143,6 +340,7 @@ async function interpretWithOpenAI({
     problemStatement,
     imageBase64,
     mimeType,
+    apiKey,
   })
 
   const parsed = parseModelJson(completion)
@@ -163,6 +361,8 @@ async function analyzeWithOpenAI({
   imageBase64,
   mimeType,
   confirmedLines,
+  apiKey,
+  feedbackLevel = 1,
 }) {
   const confirmedText = confirmedLines
     ? `\n\nStudent-confirmed transcription (authoritative):\n${confirmedLines
@@ -183,12 +383,15 @@ async function analyzeWithOpenAI({
         .join('\n')}`
     : ''
   const completion = await requestStructuredOutput({
-    instructions: diagnosisInstructions,
+    instructions: `${diagnosisInstructions}\n\n${getAssistanceInstructions(
+      feedbackLevel,
+    )}`,
     schema: feedbackJsonSchema,
     schemaName: 'handwritten_physics_feedback',
     problemStatement: `${problemStatement}${confirmedText}`,
     imageBase64,
     mimeType,
+    apiKey,
   })
   const parsed = parseModelJson(completion)
 
@@ -218,6 +421,51 @@ async function analyzeWithOpenAI({
   }
 }
 
+async function generateWorkedSolutionWithOpenAI({
+  apiKey,
+  problemStatement,
+  confirmedLines,
+  currentDiagnosis,
+  revisionHistorySummary,
+  diagramInterpretation,
+}) {
+  const completion = await requestTextStructuredOutput({
+    apiKey,
+    instructions: workedSolutionInstructions,
+    schema: workedSolutionJsonSchema,
+    schemaName: 'worked_physics_solution',
+    inputText: `Physics problem:
+${problemStatement}
+
+Student-confirmed work:
+${confirmedLines
+  .map(
+    (line) =>
+      `Line ${line.order} [${line.workStatus}]: ${line.confirmedText}`,
+  )
+  .join('\n')}
+
+Current diagnosis:
+${JSON.stringify(currentDiagnosis)}
+
+Revision history:
+${revisionHistorySummary}
+
+Relevant diagram interpretation:
+${diagramInterpretation}`,
+  })
+
+  try {
+    return validateWorkedSolution(parseModelJson(completion))
+  } catch (error) {
+    console.error('Invalid worked-solution response:', formatError(error))
+    throw createHttpError(
+      502,
+      'The worked solution did not match the expected schema.',
+    )
+  }
+}
+
 async function requestStructuredOutput({
   instructions,
   schema,
@@ -225,6 +473,7 @@ async function requestStructuredOutput({
   problemStatement,
   imageBase64,
   mimeType,
+  apiKey,
 }) {
   let OpenAI
 
@@ -237,7 +486,7 @@ async function requestStructuredOutput({
     )
   }
 
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const client = new OpenAI({ apiKey })
   const model = process.env.OPENAI_MODEL || defaultModel
   const imageUrl = `data:${mimeType};base64,${imageBase64}`
 
@@ -260,6 +509,50 @@ async function requestStructuredOutput({
           ],
         },
       ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: schemaName,
+          strict: true,
+          schema,
+        },
+      },
+    })
+  } catch (error) {
+    console.error('OpenAI request failed:', formatError(error))
+    throw createHttpError(
+      502,
+      'The OpenAI request failed. Check the API key, model access, and network connection.',
+    )
+  }
+}
+
+async function requestTextStructuredOutput({
+  apiKey,
+  instructions,
+  schema,
+  schemaName,
+  inputText,
+}) {
+  let OpenAI
+
+  try {
+    OpenAI = (await import('openai')).default
+  } catch {
+    throw createHttpError(
+      500,
+      'The OpenAI SDK is not installed. Run npm.cmd install before using AI analysis.',
+    )
+  }
+
+  const client = new OpenAI({ apiKey })
+  const model = process.env.OPENAI_MODEL || defaultModel
+
+  try {
+    return await client.responses.create({
+      model,
+      instructions,
+      input: [{ role: 'user', content: inputText }],
       text: {
         format: {
           type: 'json_schema',
@@ -332,6 +625,14 @@ function suppressCrossedOutPraise(feedback, confirmedLines) {
 }
 
 async function readJsonBody(request) {
+  const contentLength = Number(request.headers['content-length'])
+  if (Number.isFinite(contentLength) && contentLength > maxJsonBytes) {
+    throw createHttpError(
+      413,
+      'Request is too large. Upload an image smaller than 8 MB.',
+    )
+  }
+
   const chunks = []
   let receivedBytes = 0
 
@@ -389,13 +690,36 @@ function readRequiredString(value, fieldName) {
   return value
 }
 
-function requireApiKey() {
-  if (!process.env.OPENAI_API_KEY) {
+function readFeedbackLevel(value) {
+  return value === 2 || value === 3 ? value : 1
+}
+
+function readNonNegativeInteger(value, fieldName) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw createHttpError(400, `${fieldName} must be a non-negative integer.`)
+  }
+  return value
+}
+
+function requireApiKey(request) {
+  const headerValue = request.headers['x-openai-api-key']
+  const browserApiKey = (
+    Array.isArray(headerValue) ? headerValue[0] : headerValue
+  )?.trim()
+
+  if (browserApiKey && browserApiKey.length > 512) {
+    throw createHttpError(400, 'The supplied API key is too long.')
+  }
+
+  const apiKey = browserApiKey || process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) {
     throw createHttpError(
-      500,
-      'OpenAI API key is missing. Add OPENAI_API_KEY to .env.local, then restart the dev server.',
+      401,
+      'OpenAI API key is missing. Add one from the top-right menu or set OPENAI_API_KEY in .env.local.',
     )
   }
+
+  return apiKey
 }
 
 function sendJson(response, status, payload) {
@@ -433,7 +757,7 @@ function formatError(error) {
 async function loadLocalEnv() {
   for (const filename of ['.env.local', '.env']) {
     try {
-      const envText = await readFile(resolve(process.cwd(), filename), 'utf8')
+      const envText = await readFile(resolve(projectRoot, filename), 'utf8')
 
       for (const line of envText.split(/\r?\n/)) {
         const trimmed = line.trim()
@@ -509,11 +833,17 @@ Each annotation may use type check, circle, underline, arrow, note, dashed_box, 
 
 A physics_vector is a physical quantity, not a connector from a note. Use it only when the problem or student work contains a recognizable physical diagram and a specific vector is missing, reversed, or mislabeled. The vector must begin at the relevant object or physical point in the diagram. Never start a physics vector in the annotation margin.
 
-For physics_vector, provide vectorKind (force, velocity, acceleration, displacement, momentum, or other), normalized-image origin, confidence, and either endpoint or both direction and relativeLength. Direction components may be negative; relativeLength is from 0 to 1. Add a concise label when useful, such as "mg", "N", "f_k", "v_x", or "v_y". Use targetLineId when the vector corresponds to a confirmed line. Physics vector geometry must have confidence of at least 0.72. If the object location, origin, or direction is less certain, return a note_only annotation instead, keep the teacher cue in noteText, and explain in targetDescription that exact vector placement is uncertain.
+For every free-body-diagram correction, provide targetObject, vectorIssue (missing, extra, reversed, mislabeled, wrong_object, or not_a_force), and the bounded semantic vectorKind. Supported vector kinds are force, weight, normal, friction, tension, applied_force, net_inward_force, component, velocity, acceleration, displacement, momentum, and other. Use replacementFor to briefly identify an existing student vector when proposing an offset correction; otherwise use null.
 
-Initial physics-vector support is limited to: weight downward; normal force perpendicular to a visible surface; friction opposite visible relative motion; velocity in the visible direction of motion; acceleration in simple one-dimensional motion; and horizontal or vertical projectile velocity components. Do not reconstruct an arbitrary free-body diagram or add every possible vector.
+For physics_vector, provide normalized-image origin, confidence, and either endpoint or both direction and relativeLength. Direction components may be negative; relativeLength is from 0 to 1. Add a concise label when useful, such as "mg", "N", "f_k", "T", "F_app", "v_x", or "v_y". Use targetLineId when the vector corresponds to a confirmed line. Physics vector geometry must have confidence of at least 0.72. If the object location, origin, or direction is less certain, return a note_only annotation instead, keep the teacher cue in noteText, and explain in targetDescription that exact vector placement is uncertain.
+
+Bounded FBD support covers only: an object on a horizontal surface, an object on an incline, a hanging mass, two objects connected by one rope, and a basic circular-motion force diagram. Within those families, check missing or extra forces, wrong direction or label, force assigned to the wrong object, velocity or acceleration confused with force, a non-perpendicular normal, reversed friction, swapped gravity components, incorrect tension, a Newton-third-law partner placed on the same object's FBD, and "centripetal force" treated as an extra interaction instead of the net inward force. Do not reconstruct arbitrary diagrams or add every possible vector.
+
+An extra, wrong-object, mislabeled, or not-a-force arrow normally needs a tight dashed_box, underline, or note_only annotation, not another physics_vector. Before proposing a missing vector, inspect the visible student arrows and do not place the new shaft directly over one. For a reversed vector, draw a corrected replacement only when the object and geometry are clear; set replacementFor and offset the corrected origin slightly so it does not cover the student's arrow. For two-object diagrams, identify the specific target object and do not collapse the objects into one system unless the student explicitly chose a system boundary.
 
 For a box sliding right on a rough horizontal floor with N upward, mg downward, velocity rightward, and friction missing, identify the missing friction and propose one leftward force physics_vector beginning at the box, labeled "f_k". A separate right-margin note may ask "What force is slowing the box?" and may use its own note leader. Do not use the physics-vector arrow as the note leader.
+
+For a book on a table with an extra downward "force of book on table" on the book's FBD, mark that existing arrow as wrong_object and ask "Does this force act on the book or the table?" Do not add a replacement vector. On an incline, normal is perpendicular to the visible surface and the downhill gravity component is mg sin theta while the perpendicular component is mg cos theta; prefer label annotations over redrawing the whole diagram. For a hanging mass missing tension, add an upward tension vector only when the mass center is clear and ask "What supports the mass?" In circular motion, do not add a separate centripetal interaction when tension or another real force already supplies the inward net force; ask "Which real force provides the inward net force?"
 
 Write noteText like a teacher marking a student's page: short, specific, conversational, and revision-oriented. Use a question when it can prompt the student to inspect their own reasoning. Use a direct correction only for a simple algebra, sign, or unit issue. Keep notes under roughly 8 to 12 words whenever possible and never more than one short sentence. Praise sparingly and name the specific successful choice.
 
@@ -530,3 +860,19 @@ Use notePlacement above, below, left, right, or auto. Usually set notePosition n
 Examples: for h = vt in free fall, use a dashed_box with "Is this the right equation?", category question, and one leader to the boxed equation; near a misuse of 9.8, use "Acceleration, not velocity." For a reversed algebraic ratio, underline it and write "This fraction is backwards." For a correct h = 1/2 gt^2 step, use a green praise check with "Good equation choice."
 
 Locate the exact handwritten step associated with the first issue. Keep marks tight and avoid covering large areas of the student's work. If localization is uncertain, set low confidence and use null for region, anchor, notePosition, and leaderAnchor rather than inventing a location; the side panel will retain the text feedback.`
+
+function getAssistanceInstructions(feedbackLevel) {
+  if (feedbackLevel === 2) {
+    return `Assistance level 2: give more explicit guidance about the first issue. Name the relevant principle or relationship and explain the key concept directly, but do not provide a complete derivation, numerical answer, or worked solution.`
+  }
+  if (feedbackLevel === 3) {
+    return `Assistance level 3: the separate worked-solution action may now be available. In this diagnosis, still provide concise explicit guidance only. Do not include the complete derivation or final answer here.`
+  }
+  return `Assistance level 1: give a conceptual hint, preferably a short teacher-like question. Do not reveal the correct equation, substitution, or final answer unless basic intelligibility requires it.`
+}
+
+const workedSolutionInstructions = `You are preparing a concise worked solution after a student explicitly requested it and already made at least two unsuccessful revisions of the same core issue.
+
+Return a complete but focused introductory-mechanics solution. Clearly separate this solution from the student's submitted work. Include step-by-step reasoning, equations, substitutions, units, and a final answer. When a free-body diagram is relevant, explain which real interactions produce each force and their directions. Do not invent diagram details that are not supported by the problem statement or confirmed diagnosis.
+
+Use 1 to 8 short steps. Each step has a title and explanation; equation, substitution, and units may be null when not applicable. Keep finalAnswer concise. Use diagramExplanation only when a diagram materially helps. Report uncertainty or assumptions in limitations rather than hiding them.`
