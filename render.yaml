@@ -3,12 +3,10 @@ services:
     name: handwritten-physics-feedback
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_MODEL
