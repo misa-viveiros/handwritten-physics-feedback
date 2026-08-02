@@ -249,13 +249,22 @@ tension, object-specific rope tension, and an extra centripetal force.
 
 ## Camera Capture
 
-The sidebar uses one file input with two compact actions. `Upload image` opens
-the normal file picker. `Take photo` temporarily applies
+The sidebar uses one file input with two compact actions. `Upload image or PDF`
+opens the general file picker with `image/*,application/pdf`. `Take photo`
+temporarily applies
 `capture="environment"` and `accept="image/*"` so supported mobile browsers can
 open the rear camera. Captured files use the same validation, preview,
 interpretation, and diagnosis workflow. The original file and orientation
 metadata are preserved; there is no persistent camera permission, live preview,
 video, WebRTC, or custom camera interface.
+
+PDF import uses Mozilla PDF.js in the browser. A single-page PDF renders page 1
+automatically. A multi-page PDF shows a page selector and renders only the
+selected page to JPEG at up to 2x scale, 2600 pixels on the longest edge, and 6
+megapixels. The rendered image then uses the same preview, coordinate mapping,
+interpretation, diagnosis, and annotation pipeline as an uploaded photo. The
+original PDF is not sent to the analysis API. There is no direct Samsung Notes
+integration; students export a note as an image or PDF first.
 
 ## Pilot Study Logging
 
@@ -266,6 +275,10 @@ interpretation uncertainty, distinct transcription edits, crossed-out-status
 corrections, feedback level, revisions, issue resolution, worked-solution
 state, vector proposal/render/fallback counts, API failures, and reset/cancel
 actions.
+
+Upload instrumentation may include `sourceType`, `pdfPageNumber`, and
+`pdfPageCount`. It excludes original filenames, local paths, image bytes, PDF
+bytes, and device metadata.
 
 The log never includes image bytes, image contents, or API keys. Confirmed
 transcription is excluded by default and is included only when both study mode
@@ -305,15 +318,17 @@ the unchanged student page and 23% for teacher notes. Normalized model
 coordinates remain relative to the page itself, so the gutter is excluded from
 all interpretation and annotation geometry.
 
-## Image Limits
+## Input Limits
 
 Supported image formats:
 
 - JPG/JPEG
 - PNG
 - WEBP
+- PDF exported from a note-taking app
 
-HEIC/HEIF is not supported yet. The current image size limit is 8 MB.
+HEIC/HEIF is not supported yet. The image size limit is 8 MB and the source PDF
+limit is 20 MB. Only one PDF page is rendered and analyzed at a time.
 
 ## Current Limitations
 

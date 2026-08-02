@@ -59,6 +59,10 @@ import {
   problemBank,
   type PracticeProblem,
 } from './problems/problemBank'
+import type {
+  PdfImportSession,
+  UploadSource,
+} from './pdfImport'
 
 type WorkflowStage = 'input' | 'interpretation' | 'feedback'
 
@@ -69,6 +73,7 @@ type SolutionAttempt = {
   imageFile?: File
   imageFileName?: string
   imageFingerprint?: string
+  uploadSource?: UploadSource
   interpretation?: InterpretedSolution
   lineStatuses: Record<string, LineReviewStatus | undefined>
   confirmedLines?: ConfirmedLine[]
@@ -92,6 +97,7 @@ type ProblemSession = {
 }
 
 const maxImageBytes = 8 * 1024 * 1024
+const maxPdfBytes = 20 * 1024 * 1024
 const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const apiKeyStorageKey = 'handwritten-physics-feedback:openai-api-key'
 
@@ -125,6 +131,8 @@ function App() {
   const previewUrlsRef = useRef<Set<string>>(new Set())
   const problemInputRef = useRef<HTMLTextAreaElement | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const pendingUploadSourceRef = useRef<'camera' | 'image'>('image')
+  const pdfImportSessionRef = useRef<PdfImportSession | null>(null)
   const apiKeyMenuRef = useRef<HTMLDivElement | null>(null)
   const studyLogRef = useRef(createStudySessionLog())
   const studyEditedLinesRef = useRef<Set<string>>(new Set())
@@ -137,7 +145,11 @@ function App() {
   )
   const [activeLineId, setActiveLineId] = useState<string | null>(null)
   const [activeRequest, setActiveRequest] = useState<
-    'interpreting' | 'diagnosing' | 'worked-solution' | null
+    | 'importing-pdf'
+    | 'interpreting'
+    | 'diagnosing'
+    | 'worked-solution'
+    | null
   >(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null)
@@ -161,6 +173,7 @@ function App() {
   const imagePreviewUrl = activeAttempt?.imageUrl ?? null
   const imageFile = activeAttempt?.imageFile ?? null
   const imageName = activeAttempt?.imageFileName ?? ''
+  const uploadSource = activeAttempt?.uploadSource
   const interpretation = activeAttempt?.interpretation
   const lineStatuses = activeAttempt?.lineStatuses ?? {}
   const confirmedLines = activeAttempt?.confirmedLines ?? []
@@ -183,6 +196,19 @@ function App() {
       previewUrls.clear()
     }
   }, [])
+
+  useEffect(
+    () => () => {
+      const pdfSession = pdfImportSessionRef.current
+      if (pdfSession) {
+        void import('./pdfImport').then(({ closePdfImport }) =>
+          closePdfImport(pdfSession),
+        )
+      }
+      pdfImportSessionRef.current = null
+    },
+    [],
+  )
 
   useEffect(() => {
     if (!apiKeyMenuOpen) {
@@ -269,29 +295,34 @@ function App() {
       return
     }
     input.value = ''
+    pendingUploadSourceRef.current = mode === 'camera' ? 'camera' : 'image'
     if (mode === 'camera') {
+      input.setAttribute('accept', 'image/*')
       input.setAttribute('capture', 'environment')
     } else {
+      input.setAttribute('accept', 'image/*,application/pdf')
       input.removeAttribute('capture')
     }
     input.click()
   }
 
   async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+    const selectedFile = event.target.files?.[0]
     setErrorMessage(null)
     setNoticeMessage(null)
 
-    if (!file) {
+    if (!selectedFile) {
       clearImage()
       return
     }
 
-    const imageError = validateImageFile(file)
-    if (imageError) {
+    const file = normalizeSelectedFile(selectedFile)
+
+    const uploadError = validateUploadFile(file)
+    if (uploadError) {
       clearImage()
       event.target.value = ''
-      setErrorMessage(imageError)
+      setErrorMessage(uploadError)
       return
     }
 
@@ -299,16 +330,127 @@ function App() {
       return
     }
 
-    revokePreviewUrl(activeAttempt.imageUrl ?? null)
+    if (isPdfFile(file)) {
+      await importPdf(file, activeAttempt.id)
+      return
+    }
+
+    await replacePdfImportSession(null)
+    await applyImportedImage(
+      activeAttempt.id,
+      file,
+      {
+        sourceType: pendingUploadSourceRef.current,
+        originalFileName: file.name,
+      },
+      file.name,
+    )
+  }
+
+  async function importPdf(file: File, attemptId: string) {
+    setActiveRequest('importing-pdf')
+    try {
+      const { openPdfImport, renderPdfPageToImage } = await import(
+        './pdfImport'
+      )
+      const pdfSession = await openPdfImport(file)
+      await replacePdfImportSession(pdfSession)
+      const renderedPage = await renderPdfPageToImage(pdfSession, 1)
+      await applyImportedImage(
+        attemptId,
+        renderedPage.imageFile,
+        {
+          sourceType: 'pdf',
+          originalFileName: file.name,
+          pdfPageNumber: 1,
+          pdfPageCount: pdfSession.pageCount,
+        },
+        formatPdfUploadName(file.name, 1, pdfSession.pageCount),
+      )
+      recordStudyEvent('pdf_imported', {
+        attemptNumber,
+        pdfPageNumber: 1,
+        pdfPageCount: pdfSession.pageCount,
+        renderedWidth: renderedPage.renderedWidth,
+        renderedHeight: renderedPage.renderedHeight,
+      })
+    } catch {
+      await replacePdfImportSession(null)
+      clearImage()
+      setErrorMessage(
+        "We couldn't read this PDF. Try exporting the note as an image instead.",
+      )
+    } finally {
+      setActiveRequest(null)
+    }
+  }
+
+  async function handlePdfPageChange(pageNumber: number) {
+    const pdfSession = pdfImportSessionRef.current
+    if (
+      !activeAttempt ||
+      !pdfSession ||
+      stage !== 'input' ||
+      activeRequest !== null
+    ) {
+      return
+    }
+
+    setErrorMessage(null)
+    setNoticeMessage(null)
+    setActiveRequest('importing-pdf')
+    try {
+      const { renderPdfPageToImage } = await import('./pdfImport')
+      const renderedPage = await renderPdfPageToImage(pdfSession, pageNumber)
+      await applyImportedImage(
+        activeAttempt.id,
+        renderedPage.imageFile,
+        {
+          sourceType: 'pdf',
+          originalFileName: pdfSession.originalFileName,
+          pdfPageNumber: pageNumber,
+          pdfPageCount: pdfSession.pageCount,
+        },
+        formatPdfUploadName(
+          pdfSession.originalFileName,
+          pageNumber,
+          pdfSession.pageCount,
+        ),
+      )
+      recordStudyEvent('pdf_page_selected', {
+        attemptNumber,
+        pdfPageNumber: pageNumber,
+        pdfPageCount: pdfSession.pageCount,
+      })
+    } catch {
+      setErrorMessage(
+        "We couldn't render this PDF page. Try another page or export the note as an image.",
+      )
+    } finally {
+      setActiveRequest(null)
+    }
+  }
+
+  async function applyImportedImage(
+    attemptId: string,
+    file: File,
+    source: UploadSource,
+    displayName: string,
+  ) {
+    const currentAttempt = session.attempts.find(
+      (attempt) => attempt.id === attemptId,
+    )
+    revokePreviewUrl(currentAttempt?.imageUrl ?? null)
     const nextPreviewUrl = URL.createObjectURL(file)
     previewUrlsRef.current.add(nextPreviewUrl)
     const nextFingerprint = await createImageFingerprint(file)
-    updateAttemptById(activeAttempt.id, (attempt) => ({
+    updateAttemptById(attemptId, (attempt) => ({
       ...attempt,
       imageUrl: nextPreviewUrl,
       imageFile: file,
-      imageFileName: file.name,
+      imageFileName: displayName,
       imageFingerprint: nextFingerprint,
+      uploadSource: source,
       interpretation: undefined,
       lineStatuses: {},
       confirmedLines: undefined,
@@ -323,9 +465,21 @@ function App() {
     }))
     const uploadTimestamp = new Date().toISOString()
     studyLogRef.current.metrics.imageUploadTimestamp = uploadTimestamp
+    studyLogRef.current.metrics.uploadSource = {
+      sourceType: source.sourceType,
+      ...(source.pdfPageNumber
+        ? { pdfPageNumber: source.pdfPageNumber }
+        : {}),
+      ...(source.pdfPageCount ? { pdfPageCount: source.pdfPageCount } : {}),
+    }
     recordStudyEvent('image_uploaded', {
       attemptNumber,
       timestamp: uploadTimestamp,
+      sourceType: source.sourceType,
+      ...(source.pdfPageNumber
+        ? { pdfPageNumber: source.pdfPageNumber }
+        : {}),
+      ...(source.pdfPageCount ? { pdfPageCount: source.pdfPageCount } : {}),
     })
     setActiveLineId(null)
 
@@ -340,6 +494,7 @@ function App() {
     if (!activeAttempt) {
       return
     }
+    void replacePdfImportSession(null)
     revokePreviewUrl(activeAttempt.imageUrl ?? null)
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...createAttempt(attempt.attemptNumber, attempt.id),
@@ -347,6 +502,15 @@ function App() {
     }))
     setActiveLineId(null)
     setErrorMessage(null)
+  }
+
+  async function replacePdfImportSession(next: PdfImportSession | null) {
+    const previous = pdfImportSessionRef.current
+    pdfImportSessionRef.current = next
+    if (previous && previous !== next) {
+      const { closePdfImport } = await import('./pdfImport')
+      await closePdfImport(previous)
+    }
   }
 
   function revokePreviewUrl(url: string | null) {
@@ -363,6 +527,7 @@ function App() {
     recordStudyEvent('problem_reset')
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     previewUrlsRef.current.clear()
+    void replacePdfImportSession(null)
     setSession(
       createProblemSession(typeof problem === 'object' ? problem : undefined),
     )
@@ -418,6 +583,7 @@ function App() {
       return
     }
     revokePreviewUrl(activeAttempt.imageUrl ?? null)
+    void replacePdfImportSession(null)
     studyLogRef.current.metrics.resetActions += 1
     recordStudyEvent('attempt_reset', { attemptNumber })
     updateAttemptById(activeAttempt.id, (attempt) => ({
@@ -434,6 +600,7 @@ function App() {
       return
     }
     const nextAttempt = createAttempt(session.attempts.length + 1)
+    void replacePdfImportSession(null)
     studyLogRef.current.metrics.revisions += 1
     recordStudyEvent('revision_started', {
       attemptNumber: nextAttempt.attemptNumber,
@@ -472,11 +639,11 @@ function App() {
     }
 
     if (!activeAttempt || !imageFile) {
-      setErrorMessage('Upload a JPG, PNG, or WEBP image before interpreting.')
+      setErrorMessage('Upload an image or PDF before interpreting.')
       return
     }
 
-    const imageError = validateImageFile(imageFile)
+    const imageError = validateUploadFile(imageFile)
     if (imageError) {
       setErrorMessage(imageError)
       return
@@ -1216,7 +1383,7 @@ function App() {
                 : 'Add handwritten solution'}
             </span>
             <span className="upload-detail">
-              {imageName || 'Choose a JPG, PNG, or WEBP image'}
+              {imageName || 'Choose a JPG, PNG, WEBP, or PDF file'}
             </span>
             <div className="image-source-actions">
               <button
@@ -1231,15 +1398,43 @@ function App() {
                 onClick={() => openImagePicker('upload')}
                 type="button"
               >
-                Upload image
+                Upload image or PDF
               </button>
             </div>
+            <span className="upload-app-hint">
+              From Samsung Notes, export your handwritten page as an image or
+              PDF, then upload it here.
+            </span>
+            {uploadSource?.sourceType === 'pdf' &&
+              uploadSource.pdfPageCount !== undefined &&
+              uploadSource.pdfPageCount > 1 && (
+                <label className="pdf-page-picker" htmlFor="pdf-page-number">
+                  Which page contains your solution?
+                  <select
+                    disabled={stage !== 'input' || activeRequest !== null}
+                    id="pdf-page-number"
+                    onChange={(event) =>
+                      void handlePdfPageChange(Number(event.target.value))
+                    }
+                    value={uploadSource.pdfPageNumber ?? 1}
+                  >
+                    {Array.from(
+                      { length: uploadSource.pdfPageCount },
+                      (_, index) => index + 1,
+                    ).map((pageNumber) => (
+                      <option key={pageNumber} value={pageNumber}>
+                        Page {pageNumber}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             <input
-              aria-label="Choose handwritten solution image"
+              aria-label="Choose handwritten solution image or PDF"
               className="image-file-input"
               id="solution-image"
               type="file"
-              accept="image/*"
+              accept="image/*,application/pdf"
               onChange={handleImageChange}
               disabled={stage !== 'input' || activeRequest !== null}
               ref={imageInputRef}
@@ -1247,9 +1442,10 @@ function App() {
           </div>
 
           <p className="privacy-notice">
-            This research prototype sends the uploaded image and problem
-            statement to an external AI service for analysis. Do not upload
-            sensitive or personally identifying information.
+            This research prototype sends the selected image page and problem
+            statement to an external AI service for analysis. PDFs are rendered
+            in your browser first. Do not upload sensitive or personally
+            identifying information.
           </p>
 
           {errorMessage && (
@@ -1306,6 +1502,8 @@ function App() {
           >
             {activeRequest === 'interpreting'
               ? 'Reading your handwriting...'
+              : activeRequest === 'importing-pdf'
+                ? 'Preparing the selected PDF page...'
               : activeRequest === 'worked-solution'
                 ? 'Preparing a worked solution...'
                 : activeRequest === 'diagnosing' && attemptNumber > 1
@@ -2504,15 +2702,21 @@ function createProblemSession(problem?: PracticeProblem): ProblemSession {
   }
 }
 
-function validateImageFile(file: File): string | null {
+function validateUploadFile(file: File): string | null {
   const lowerName = file.name.toLowerCase()
 
+  if (isPdfFile(file)) {
+    return file.size > maxPdfBytes
+      ? 'PDF is too large. Please upload a PDF smaller than 20 MB.'
+      : null
+  }
+
   if (lowerName.endsWith('.heic') || lowerName.endsWith('.heif')) {
-    return 'HEIC images are not supported yet. Please upload a JPG, PNG, or WEBP image.'
+    return 'Please upload an image or PDF.'
   }
 
   if (!supportedImageTypes.has(file.type)) {
-    return 'Unsupported image format. Please upload a JPG, PNG, or WEBP image.'
+    return 'Please upload an image or PDF.'
   }
 
   if (file.size > maxImageBytes) {
@@ -2520,6 +2724,45 @@ function validateImageFile(file: File): string | null {
   }
 
   return null
+}
+
+function isPdfFile(file: File): boolean {
+  return (
+    file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+  )
+}
+
+function normalizeSelectedFile(file: File): File {
+  if (file.type && file.type !== 'application/octet-stream') {
+    return file
+  }
+
+  const extension = file.name.toLowerCase().split('.').pop()
+  const inferredType =
+    extension === 'pdf'
+      ? 'application/pdf'
+      : extension === 'jpg' || extension === 'jpeg'
+        ? 'image/jpeg'
+        : extension === 'png'
+          ? 'image/png'
+          : extension === 'webp'
+            ? 'image/webp'
+            : undefined
+
+  return inferredType
+    ? new File([file], file.name, {
+        type: inferredType,
+        lastModified: file.lastModified,
+      })
+    : file
+}
+
+function formatPdfUploadName(
+  fileName: string,
+  pageNumber: number,
+  pageCount: number,
+): string {
+  return `${fileName} | Page ${pageNumber} of ${pageCount}`
 }
 
 function createApiHeaders(apiKey: string): Record<string, string> {

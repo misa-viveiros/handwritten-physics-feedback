@@ -2,6 +2,11 @@ import type { FeedbackResult } from './feedback'
 
 export type StudyMetrics = {
   imageUploadTimestamp?: string
+  uploadSource?: {
+    sourceType: 'camera' | 'image' | 'pdf'
+    pdfPageNumber?: number
+    pdfPageCount?: number
+  }
   interpretationDurationMs: number
   interpretedLines: number
   uncertainLines: number

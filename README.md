@@ -50,9 +50,16 @@ routes from the same Node process. The server binds to `0.0.0.0` and reads
 Render's `PORT` automatically. A Render Blueprint is provided in `render.yaml`;
 enter `OPENAI_API_KEY` as a secret in Render rather than committing it.
 
-On supported mobile devices, `Take photo` opens the rear-camera capture flow
-through the same file input used by `Upload image`. Study mode adds a task-ID
-field and metadata-only session-log export.
+Supported input methods are `Take photo`, `Upload image`, and PDF upload from a
+note-taking app such as Samsung Notes. On supported mobile devices, `Take
+photo` opens the rear-camera capture flow. The general upload action accepts an
+image or PDF without requesting camera capture.
+
+PDF.js renders the selected PDF page to a bounded, high-resolution JPEG in the
+browser before the normal image-analysis workflow begins. Single-page PDFs use
+page 1 automatically; multi-page PDFs show a compact page selector and analyze
+only one page at a time. There is no direct Samsung Notes integration. Study
+mode adds a task-ID field and metadata-only session-log export.
 
 See `PROJECT_NOTES.md` for the workflow, schema, privacy notes, and current
 limitations.
