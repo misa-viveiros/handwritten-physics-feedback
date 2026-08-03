@@ -27,6 +27,18 @@ const markupTypes = new Set([
   'question_mark',
   'note_only',
   'physics_vector',
+  'cross',
+  'question_note',
+  'correction_note',
+])
+const annotationKinds = new Set([
+  'check',
+  'underline',
+  'circle',
+  'cross',
+  'question_note',
+  'correction_note',
+  'physics_vector',
 ])
 const vectorKinds = new Set([
   'force',
@@ -164,7 +176,7 @@ export const feedbackJsonSchema = {
         required: [
           'lineId',
           'targetLineId',
-          'type',
+          'kind',
           'targetDescription',
           'noteText',
           'noteStyle',
@@ -173,9 +185,11 @@ export const feedbackJsonSchema = {
           'showLeader',
           'leaderAnchor',
           'category',
-          'region',
+          'targetRegion',
           'anchor',
           'confidence',
+          'issueId',
+          'isPrimaryIssue',
           'vectorKind',
           'origin',
           'endpoint',
@@ -193,7 +207,7 @@ export const feedbackJsonSchema = {
           targetLineId: {
             anyOf: [{ type: 'string' }, { type: 'null' }],
           },
-          type: { type: 'string', enum: [...markupTypes] },
+          kind: { type: 'string', enum: [...annotationKinds] },
           targetDescription: { type: 'string', minLength: 1 },
           noteText: {
             anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
@@ -247,7 +261,7 @@ export const feedbackJsonSchema = {
               { type: 'null' },
             ],
           },
-          region: {
+          targetRegion: {
             anyOf: [
               {
                 type: 'object',
@@ -279,6 +293,12 @@ export const feedbackJsonSchema = {
           },
           confidence: {
             anyOf: [{ type: 'number' }, { type: 'null' }],
+          },
+          issueId: {
+            anyOf: [{ type: 'string', minLength: 1 }, { type: 'null' }],
+          },
+          isPrimaryIssue: {
+            anyOf: [{ type: 'boolean' }, { type: 'null' }],
           },
           vectorKind: {
             anyOf: [
@@ -382,11 +402,12 @@ export function normalizeFeedbackResult(value, onDroppedMarkup = () => {}) {
       usedIds.add(normalizedMarkup.id)
       suggestedMarkup.push(normalizedMarkup)
     } catch (error) {
-      if (candidate.type === 'physics_vector') {
+      if (candidate.kind === 'physics_vector' || candidate.type === 'physics_vector') {
         try {
           const fallback = readSuggestedMarkup(
             {
               ...candidate,
+              kind: 'question_note',
               type: 'note_only',
               noteText:
                 typeof candidate.noteText === 'string' &&
@@ -524,9 +545,14 @@ export function validateFeedbackResult(value) {
 function readSuggestedMarkup(markupValue, index) {
   const markup = readRecord(markupValue, `suggestedMarkup[${index}]`)
   const path = `suggestedMarkup[${index}]`
-  const type = readEnum(markup.type, markupTypes, `${path}.type`)
+  const kind = readAnnotationKind(markup, path)
+  const type =
+    markup.type === undefined || markup.type === null
+      ? kind
+      : readEnum(markup.type, markupTypes, `${path}.type`)
   const result = {
     id: readString(markup.id, `${path}.id`),
+    kind,
     lineId:
       markup.lineId === undefined || markup.lineId === null
         ? undefined
@@ -543,7 +569,7 @@ function readSuggestedMarkup(markupValue, index) {
     noteText:
       markup.noteText === undefined || markup.noteText === null
         ? undefined
-        : readString(markup.noteText, `${path}.noteText`),
+        : limitAnnotationText(readString(markup.noteText, `${path}.noteText`)),
     noteStyle:
       markup.noteStyle === undefined || markup.noteStyle === null
         ? undefined
@@ -584,8 +610,12 @@ function readSuggestedMarkup(markupValue, index) {
             `${path}.category`,
           ),
     region: readOptionalRegion(
-      markup.region,
-      `${path}.region`,
+      markup.targetRegion ?? markup.region,
+      `${path}.targetRegion`,
+    ),
+    targetRegion: readOptionalRegion(
+      markup.targetRegion ?? markup.region,
+      `${path}.targetRegion`,
     ),
     anchor: readOptionalAnchor(
       markup.anchor,
@@ -600,6 +630,14 @@ function readSuggestedMarkup(markupValue, index) {
               `${path}.confidence`,
             ),
           ),
+    issueId:
+      markup.issueId === undefined || markup.issueId === null
+        ? undefined
+        : readString(markup.issueId, `${path}.issueId`),
+    isPrimaryIssue:
+      markup.isPrimaryIssue === undefined || markup.isPrimaryIssue === null
+        ? undefined
+        : readBoolean(markup.isPrimaryIssue, `${path}.isPrimaryIssue`),
     targetObject:
       markup.targetObject === undefined || markup.targetObject === null
         ? undefined
@@ -622,7 +660,7 @@ function readSuggestedMarkup(markupValue, index) {
         : readEnum(markup.vectorKind, vectorKinds, `${path}.vectorKind`),
   }
 
-  if (type !== 'physics_vector') {
+  if (kind !== 'physics_vector') {
     return result
   }
 
@@ -664,6 +702,30 @@ function readSuggestedMarkup(markupValue, index) {
   }
 
   return result
+}
+
+function readAnnotationKind(markup, path) {
+  if (markup.kind !== undefined && markup.kind !== null) {
+    return readEnum(markup.kind, annotationKinds, `${path}.kind`)
+  }
+
+  const legacyType = readEnum(markup.type, markupTypes, `${path}.type`)
+  if (legacyType === 'note' || legacyType === 'note_only' || legacyType === 'arrow') {
+    return markup.category === 'question' ? 'question_note' : 'correction_note'
+  }
+  if (legacyType === 'question_mark') {
+    return 'question_note'
+  }
+  if (legacyType === 'dashed_box') {
+    return 'circle'
+  }
+  return legacyType
+}
+
+function limitAnnotationText(value) {
+  const firstSentence = value.trim().split(/(?<=[.!?])\s+/u)[0]
+  const words = firstSentence.split(/\s+/u)
+  return words.length <= 15 ? firstSentence : `${words.slice(0, 15).join(' ')}...`
 }
 
 function createFallbackMarkupId(index, usedIds) {

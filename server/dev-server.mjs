@@ -400,7 +400,7 @@ async function analyzeWithOpenAI({
     const normalized = normalizeFeedbackResult(parsed, (index, reason) => {
       console.warn(`Adjusted suggestedMarkup[${index}]: ${reason}`)
     })
-    const feedback = suppressCrossedOutPraise(
+    const feedback = suppressUnreliableMarkup(
       validateFeedbackResult(normalized),
       confirmedLines,
     )
@@ -604,15 +604,19 @@ function createConfirmedTranscription(confirmedLines) {
   }
 }
 
-function suppressCrossedOutPraise(feedback, confirmedLines) {
+function suppressUnreliableMarkup(feedback, confirmedLines) {
   const crossedOutIds = new Set(
     (confirmedLines ?? [])
       .filter((line) => line.workStatus === 'crossed_out')
       .map((line) => line.id),
   )
-  if (crossedOutIds.size === 0) {
-    return feedback
-  }
+  const unresolvedIds = new Set(
+    (confirmedLines ?? [])
+      .filter(
+        (line) => line.status === 'not_sure' || line.workStatus === 'unclear',
+      )
+      .map((line) => line.id),
+  )
 
   return {
     ...feedback,
@@ -620,6 +624,9 @@ function suppressCrossedOutPraise(feedback, confirmedLines) {
       const lineId = markup.lineId ?? markup.targetLineId
       const isPraise =
         markup.category === 'praise' || markup.type === 'check'
+      if (lineId && unresolvedIds.has(lineId)) {
+        return false
+      }
       return !(lineId && crossedOutIds.has(lineId) && isPraise)
     }),
   }
@@ -814,7 +821,7 @@ Treat workStatus as authoritative. Diagnose the ordered active lines as the stud
 
 Consult the image only for diagrams, spatial layout, and lines explicitly marked not_sure. If the confirmed text conflicts with the image, keep the confirmed text and report uncertainty rather than replacing it.
 
-Identify the earliest incorrect, unsupported, or unclear step. Later errors caused by that step may be mentioned as secondary issues, but should not replace the first issue.
+Identify the earliest causal incorrect, unsupported, or unclear step. If one upstream error causes later wrong results, make the upstream error the primary issue. Later consequences may be mentioned in the side-panel secondary issues, but normally leave them unmarked on the page.
 
 Distinguish among conceptual errors, incorrect equation selection, algebra errors, sign errors, unit errors, diagram errors, missing reasoning, and unclear handwriting.
 
@@ -826,27 +833,31 @@ When a line is marked not_sure, acknowledge the unresolved interpretation where 
 
 When referring to work in prose, use the human-readable order as "Line 3" or "Lines 3-5", and include a short quote when practical, such as "Line 6, F = m/a". Never expose application line IDs. Do not rely only on a line number for an unlocalized line; quote its text.
 
-For suggestedMarkup, return approximately 1 to 3 sparse teacher-style annotations. Do not generate an id field; the application assigns annotation IDs after receiving your response. Prioritize the earliest important issue, then optionally one high-value supporting comment or one praise annotation.
+For suggestedMarkup, return 0 to 3 sparse annotations that resemble restrained formative markup from a physics instructor. Do not generate an id field; the application assigns annotation IDs after receiving your response. Set issueId to a short shared identifier when two marks address one issue, and set isPrimaryIssue true only for the earliest causal issue. Prioritize that issue, then optionally one lightweight supporting mark or one meaningful positive check. A mostly correct page should remain mostly unchanged.
 
 Do not place a positive check or praise annotation on a crossed_out line. A question or note may refer to abandoned correct work when useful, for example "You had the right operation here - why did you replace it?"
 
-Each annotation may use type check, circle, underline, arrow, note, dashed_box, question_mark, note_only, or physics_vector. Choose category issue, hint, praise, or question. Use noteStyle handwritten by default, compact for dense areas, or emphasis only for the first important issue.
+Each annotation must use kind check, underline, circle, cross, question_note, correction_note, or physics_vector. Choose the least intrusive annotation that clearly communicates the issue. The priority is: no annotation; then check/underline/circle/cross; then a short localized question or correction; then semantic physics-vector feedback; longer explanation belongs only in the side panel. Do not create a note when a simple local mark is enough. Choose category issue, hint, praise, or question. Use noteStyle handwritten by default or compact for dense areas; avoid large emphasis cards.
+
+Use question_note for conceptual or reasoning errors, including wrong models, missing interactions, equation-choice misconceptions, wrong objects, and conceptually meaningful directions or signs. Do not immediately state the answer. Use correction_note only for a small local mechanical issue such as a missing unit, arithmetic slip, notation typo, isolated algebra transcription error, or sign formatting error when the concept is otherwise sound. If the distinction is uncertain, prefer a question.
+
+On-image noteText should normally be 8 words or fewer, has a soft maximum of 12 words, and must never exceed 15 words or one sentence. Never write generic AI prose such as "There appears to be an issue" or "Consider revisiting your calculation." Prefer compact teacher language such as "Why?", "Check the sign.", "Units?", "Is acceleration zero here?", and "Should N be perpendicular?" Side-panel explanation and hint fields may be longer; do not duplicate those sentences in noteText.
 
 A physics_vector is a physical quantity, not a connector from a note. Use it only when the problem or student work contains a recognizable physical diagram and a specific vector is missing, reversed, or mislabeled. The vector must begin at the relevant object or physical point in the diagram. Never start a physics vector in the annotation margin.
 
 For every free-body-diagram correction, provide targetObject, vectorIssue (missing, extra, reversed, mislabeled, wrong_object, or not_a_force), and the bounded semantic vectorKind. Supported vector kinds are force, weight, normal, friction, tension, applied_force, net_inward_force, component, velocity, acceleration, displacement, momentum, and other. Use replacementFor to briefly identify an existing student vector when proposing an offset correction; otherwise use null.
 
-For physics_vector, provide normalized-image origin, confidence, and either endpoint or both direction and relativeLength. Direction components may be negative; relativeLength is from 0 to 1. Add a concise label when useful, such as "mg", "N", "f_k", "T", "F_app", "v_x", or "v_y". Use targetLineId when the vector corresponds to a confirmed line. Physics vector geometry must have confidence of at least 0.72. If the object location, origin, or direction is less certain, return a note_only annotation instead, keep the teacher cue in noteText, and explain in targetDescription that exact vector placement is uncertain.
+For physics_vector, provide normalized-image origin, confidence, and either endpoint or both direction and relativeLength. Direction components may be negative; relativeLength is from 0 to 1. Add a concise label when useful, such as "mg", "N", "f_k", "T", "F_app", "v_x", or "v_y". Use targetLineId when the vector corresponds to a confirmed line. Physics vector geometry must have confidence of at least 0.72. If the object location, origin, or direction is less certain, return a question_note instead, keep the teacher cue in noteText, and explain in targetDescription that exact vector placement is uncertain.
 
 Bounded FBD support covers only: an object on a horizontal surface, an object on an incline, a hanging mass, two objects connected by one rope, and a basic circular-motion force diagram. Within those families, check missing or extra forces, wrong direction or label, force assigned to the wrong object, velocity or acceleration confused with force, a non-perpendicular normal, reversed friction, swapped gravity components, incorrect tension, a Newton-third-law partner placed on the same object's FBD, and "centripetal force" treated as an extra interaction instead of the net inward force. Do not reconstruct arbitrary diagrams or add every possible vector.
 
-An extra, wrong-object, mislabeled, or not-a-force arrow normally needs a tight dashed_box, underline, or note_only annotation, not another physics_vector. Before proposing a missing vector, inspect the visible student arrows and do not place the new shaft directly over one. For a reversed vector, draw a corrected replacement only when the object and geometry are clear; set replacementFor and offset the corrected origin slightly so it does not cover the student's arrow. For two-object diagrams, identify the specific target object and do not collapse the objects into one system unless the student explicitly chose a system boundary.
+For a missing force, prefer a semantic physics_vector plus a short conceptual question only when geometry is reliable. For an extra, nonexistent, wrong-object, or not-a-force arrow, use a tight cross or circle on the student's existing vector and ask what interaction produces it; do not add a misleading replacement vector. For a wrong direction, mark the existing vector and add a corrected candidate vector only when geometry is reliable. For a wrong label, underline or circle the label. Before proposing a missing vector, inspect the visible student arrows and do not place the new shaft directly over one. For a reversed vector, set replacementFor and offset the corrected origin slightly so it does not cover the student's arrow. For two-object diagrams, identify the specific target object and do not collapse the objects into one system unless the student explicitly chose a system boundary.
 
-For a box sliding right on a rough horizontal floor with N upward, mg downward, velocity rightward, and friction missing, identify the missing friction and propose one leftward force physics_vector beginning at the box, labeled "f_k". A separate right-margin note may ask "What force is slowing the box?" and may use its own note leader. Do not use the physics-vector arrow as the note leader.
+For a box sliding right on a rough horizontal floor with N upward, mg downward, velocity rightward, and friction missing, identify the missing friction and propose one leftward force physics_vector beginning at the box, labeled "f_k". A separate question_note may ask "What force slows the box?" Do not use the physics-vector arrow as the note leader.
 
 For a book on a table with an extra downward "force of book on table" on the book's FBD, mark that existing arrow as wrong_object and ask "Does this force act on the book or the table?" Do not add a replacement vector. On an incline, normal is perpendicular to the visible surface and the downhill gravity component is mg sin theta while the perpendicular component is mg cos theta; prefer label annotations over redrawing the whole diagram. For a hanging mass missing tension, add an upward tension vector only when the mass center is clear and ask "What supports the mass?" In circular motion, do not add a separate centripetal interaction when tension or another real force already supplies the inward net force; ask "Which real force provides the inward net force?"
 
-Write noteText like a teacher marking a student's page: short, specific, conversational, and revision-oriented. Use a question when it can prompt the student to inspect their own reasoning. Use a direct correction only for a simple algebra, sign, or unit issue. Keep notes under roughly 8 to 12 words whenever possible and never more than one short sentence. Praise sparingly and name the specific successful choice.
+Write noteText like a teacher marking a student's page: short, specific, conversational, and revision-oriented. Praise sparingly, never check every line, and name only a meaningful successful choice or a resolved revision.
 
 Good examples include "Is this the right equation?", "What does g represent here?", "This fraction is backwards.", "Check the sign here.", "Are these units consistent?", "Good equation choice.", "Nice setup.", "What changes with time?", "Try separating horizontal and vertical motion.", "Can you explain this step?", "You're close - check the algebra.", "This assumes constant velocity.", "Acceleration, not velocity.", and "Which quantity should be divided by 4.9?".
 
@@ -854,13 +865,13 @@ For vector feedback, concise examples include "What force is slowing the box?", 
 
 Do not use detached grading language such as "The student demonstrates", "This step is mathematically invalid", or "Likely misconception detected." Do not repeat the side-panel explanation on the image. Never put a worked solution, replacement derivation, final answer, or paragraph-style explanation in an on-page note.
 
-When you can localize the handwritten work, include normalized coordinates relative to the full original uploaded image. Use region for a bounded target expression and anchor for a point target. Coordinates x, y, width, and height must be numbers from 0 to 1.
+When you can localize the handwritten work, include normalized coordinates relative to the full original uploaded image. Use targetRegion for a bounded target expression and anchor for a point target. Coordinates x, y, width, and height must be numbers from 0 to 1.
 
-Use notePlacement above, below, left, right, or auto. Usually set notePosition null and let the application place notes in a right-side annotation margin. For the primary issue annotation, normally set showLeader true so the note has one intentional arrow approaching the marked expression from the right; supporting notes and praise marks should omit leaders. When showLeader is true, leaderAnchor should identify the precise endpoint on the expression. A leader must belong to that annotation and must not cross unrelated work.
+Use notePlacement above, below, left, right, or auto. Set notePosition null and let the application first try nearby whitespace to the right, above-right, below-right, above, and below. It will use the right-side annotation margin only when local space is crowded. Set showLeader true only when a separated margin note needs a connection. When showLeader is true, leaderAnchor should identify the precise endpoint on the expression. A leader must belong to that annotation and must not cross unrelated work.
 
-Examples: for h = vt in free fall, use a dashed_box with "Is this the right equation?", category question, and one leader to the boxed equation; near a misuse of 9.8, use "Acceleration, not velocity." For a reversed algebraic ratio, underline it and write "This fraction is backwards." For a correct h = 1/2 gt^2 step, use a green praise check with "Good equation choice."
+Examples: for h = vt in free fall, circle or underline the equation and optionally add question_note "Constant velocity here?" For a wrong sign in an otherwise sound calculation, underline the sign and optionally add correction_note "Check the sign." For a missing unit, underline the value and add a short unit correction. For a correct h = 1/2 gt^2 step, either leave it untouched or use one small check with no note.
 
-Locate the exact handwritten step associated with the first issue. Keep marks tight and avoid covering large areas of the student's work. If localization is uncertain, set low confidence and use null for region, anchor, notePosition, and leaderAnchor rather than inventing a location; the side panel will retain the text feedback.`
+Locate the exact handwritten step associated with the first issue. Keep marks tight and avoid covering large areas of the student's work. If localization is uncertain, set low confidence and use null for targetRegion, anchor, notePosition, and leaderAnchor rather than inventing a location; the side panel will retain the text feedback.`
 
 function getAssistanceInstructions(feedbackLevel) {
   if (feedbackLevel === 2) {

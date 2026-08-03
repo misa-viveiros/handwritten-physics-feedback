@@ -70,6 +70,26 @@ export type FbdVectorIssue =
   | 'wrong_object'
   | 'not_a_force'
 
+export type AnnotationKind =
+  | 'check'
+  | 'underline'
+  | 'circle'
+  | 'cross'
+  | 'question_note'
+  | 'correction_note'
+  | 'physics_vector'
+
+export type LegacyMarkupType =
+  | 'check'
+  | 'circle'
+  | 'underline'
+  | 'arrow'
+  | 'note'
+  | 'dashed_box'
+  | 'question_mark'
+  | 'note_only'
+  | 'physics_vector'
+
 export type PhysicsVectorMarkup = SuggestedMarkup & {
   type: 'physics_vector'
   vectorKind: PhysicsVectorKind
@@ -91,18 +111,11 @@ export type PhysicsVectorMarkup = SuggestedMarkup & {
 
 export type SuggestedMarkup = {
   id: string
+  kind: AnnotationKind
   lineId?: string
   targetLineId?: string
-  type:
-    | 'check'
-    | 'circle'
-    | 'underline'
-    | 'arrow'
-    | 'note'
-    | 'dashed_box'
-    | 'question_mark'
-    | 'note_only'
-    | 'physics_vector'
+  /** Canonical rendering type retained for older saved feedback and clients. */
+  type: LegacyMarkupType | AnnotationKind
   targetDescription: string
   noteText?: string
   noteStyle?: 'handwritten' | 'compact' | 'emphasis'
@@ -123,11 +136,19 @@ export type SuggestedMarkup = {
     width: number
     height: number
   }
+  targetRegion?: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
   anchor?: {
     x: number
     y: number
   }
   confidence?: number
+  issueId?: string
+  isPrimaryIssue?: boolean
   vectorKind?: PhysicsVectorKind
   origin?: {
     x: number

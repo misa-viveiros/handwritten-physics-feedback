@@ -1,4 +1,9 @@
-import type { ErrorType, FeedbackResult, OverallStatus } from './feedback'
+import type {
+  AnnotationKind,
+  ErrorType,
+  FeedbackResult,
+  OverallStatus,
+} from './feedback'
 
 type SuggestedMarkup = FeedbackResult['suggestedMarkup'][number]
 type MarkupType = FeedbackResult['suggestedMarkup'][number]['type']
@@ -31,6 +36,18 @@ const markupTypes = new Set<MarkupType>([
   'dashed_box',
   'question_mark',
   'note_only',
+  'physics_vector',
+  'cross',
+  'question_note',
+  'correction_note',
+])
+const annotationKinds = new Set<AnnotationKind>([
+  'check',
+  'underline',
+  'circle',
+  'cross',
+  'question_note',
+  'correction_note',
   'physics_vector',
 ])
 const vectorKinds = new Set([
@@ -217,10 +234,15 @@ function readSuggestedMarkup(
 ): SuggestedMarkup {
   const markup = readRecord(markupValue, `suggestedMarkup[${index}]`)
   const path = `suggestedMarkup[${index}]`
-  const type = readEnum(markup.type, markupTypes, `${path}.type`)
+  const kind = readAnnotationKind(markup, path)
+  const type =
+    markup.type === undefined || markup.type === null
+      ? kind
+      : readEnum(markup.type, markupTypes, `${path}.type`)
 
   const result: SuggestedMarkup = {
     id: readString(markup.id, `${path}.id`),
+    kind,
     lineId:
       markup.lineId === undefined || markup.lineId === null
         ? undefined
@@ -237,7 +259,9 @@ function readSuggestedMarkup(
     noteText:
       markup.noteText === undefined || markup.noteText === null
         ? undefined
-        : readString(markup.noteText, `${path}.noteText`),
+        : limitAnnotationText(
+            readString(markup.noteText, `${path}.noteText`),
+          ),
     noteStyle:
       markup.noteStyle === undefined || markup.noteStyle === null
         ? undefined
@@ -278,8 +302,12 @@ function readSuggestedMarkup(
             `${path}.category`,
           ),
     region: readOptionalRegion(
-      markup.region,
-      `${path}.region`,
+      markup.targetRegion ?? markup.region,
+      `${path}.targetRegion`,
+    ),
+    targetRegion: readOptionalRegion(
+      markup.targetRegion ?? markup.region,
+      `${path}.targetRegion`,
     ),
     anchor: readOptionalAnchor(
       markup.anchor,
@@ -294,6 +322,14 @@ function readSuggestedMarkup(
               `${path}.confidence`,
             ),
           ),
+    issueId:
+      markup.issueId === undefined || markup.issueId === null
+        ? undefined
+        : readString(markup.issueId, `${path}.issueId`),
+    isPrimaryIssue:
+      markup.isPrimaryIssue === undefined || markup.isPrimaryIssue === null
+        ? undefined
+        : readBoolean(markup.isPrimaryIssue, `${path}.isPrimaryIssue`),
     targetObject:
       markup.targetObject === undefined || markup.targetObject === null
         ? undefined
@@ -316,7 +352,7 @@ function readSuggestedMarkup(
         : readEnum(markup.vectorKind, vectorKinds, `${path}.vectorKind`),
   }
 
-  if (type !== 'physics_vector') {
+  if (kind !== 'physics_vector') {
     return result
   }
 
@@ -359,6 +395,33 @@ function readSuggestedMarkup(
   }
 
   return result
+}
+
+function readAnnotationKind(
+  markup: Record<string, unknown>,
+  path: string,
+): AnnotationKind {
+  if (markup.kind !== undefined && markup.kind !== null) {
+    return readEnum(markup.kind, annotationKinds, `${path}.kind`)
+  }
+
+  const legacyType = readEnum(markup.type, markupTypes, `${path}.type`)
+  if (legacyType === 'note' || legacyType === 'note_only' || legacyType === 'arrow') {
+    return markup.category === 'question' ? 'question_note' : 'correction_note'
+  }
+  if (legacyType === 'question_mark') {
+    return 'question_note'
+  }
+  if (legacyType === 'dashed_box') {
+    return 'circle'
+  }
+  return legacyType as AnnotationKind
+}
+
+function limitAnnotationText(value: string): string {
+  const firstSentence = value.trim().split(/(?<=[.!?])\s+/u)[0]
+  const words = firstSentence.split(/\s+/u)
+  return words.length <= 15 ? firstSentence : `${words.slice(0, 15).join(' ')}...`
 }
 
 function createFallbackMarkupId(index: number, usedIds: Set<string>): string {

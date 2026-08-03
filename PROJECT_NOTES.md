@@ -214,11 +214,45 @@ The interpretation and diagnosis endpoints request and validate structured JSON.
 
 ## Worksheet Annotations
 
-Diagnosis markup can combine a target shape (`dashed_box`, `underline`, `check`, `question_mark`, or note-only), a short note, a category (`issue`, `hint`, `praise`, or `question`), preferred note placement, and an optional leader endpoint. Legacy `circle`, `arrow`, and `note` values remain supported.
+The visual language of the annotation system is informed by common instructor-markup practices, while the feedback strategy emphasizes revision-oriented formative guidance. It is not intended to perfectly imitate an individual teacher.
 
-The browser places callout notes rather than trusting the model to choose exact note coordinates. It tries multiple sides of the target, clamps notes to the image, avoids interpreted handwriting regions and existing notes, and staggers nearby callouts. The primary non-praise annotation receives one intentional leader when its note is separated from the target. When useful feedback cannot be localized reliably, Annotated work shows one brief placement notice instead of exposing internal markup records.
+Every annotation is normalized to one semantic intent: `check`, `underline`,
+`circle`, `cross`, `question_note`, `correction_note`, or `physics_vector`.
+Legacy `dashed_box`, `question_mark`, `note_only`, `note`, and `arrow` values
+remain readable and map into that vocabulary, so prior feedback data does not
+break.
 
-On-page notes are intentionally brief revision cues, not worked solutions. The diagnosis prompt asks for short questions, hints, or praise such as `Is this the right equation?`, `Acceleration, not velocity.`, and `Good equation choice.`
+The annotation policy follows nine principles:
+
+1. Keep feedback spatially local when reliable geometry is available.
+2. Use a compact vocabulary of checks, underlines, circles, crosses, short notes, and physics vectors.
+3. Leave correct work mostly unmarked; reserve checks for meaningful reasoning or a resolved revision.
+4. Ask short questions for conceptual mistakes instead of revealing the correction.
+5. Use direct corrections only for small mechanical mistakes such as units or notation.
+6. Prefer graphical feedback for diagram and vector errors when geometry is reliable.
+7. Mark the first causal issue rather than every downstream consequence.
+8. Keep explanation and progressive guidance in the side panel rather than on the page.
+9. Choose the least intrusive mark that communicates the issue.
+
+The browser places notes rather than trusting model-selected text coordinates.
+It tests right, above-right, below-right, above, and below placements against
+interpreted handwriting, annotation targets, physics vectors, and already
+placed notes. If no local whitespace is safe, it uses the existing right
+margin and one orthogonal leader that avoids crossing the page where possible.
+When useful feedback cannot be localized reliably, Annotated work shows one
+brief placement notice instead of exposing internal markup records.
+
+On-page notes are intentionally brief revision cues, not worked solutions.
+They normally contain at most eight words and are deterministically limited to
+one sentence and fifteen words. The renderer displays no more than three marks
+per diagnosis pass, prioritizes the primary issue and related cue, and allows
+only one positive check by default. Longer reasoning remains in the feedback
+panel.
+
+Deterministic annotation fixtures cover a correct equation, missing unit,
+conceptual equation choice, missing friction, extra third-law force, wrong
+normal direction, a downstream error chain, a correct FBD, low-confidence
+handwriting, and a resolved revision.
 
 ## Free-Body Diagrams
 
@@ -238,10 +272,12 @@ force, net inward force, components, velocity, and acceleration.
 Physics vectors are drawn only above the geometry confidence threshold. A
 replacement vector is offset slightly from the student's existing vector, and
 labels are placed against interpreted writing regions to reduce collisions.
-Extra forces, wrong-object arrows, swapped component labels, and centripetal
-force used as an extra interaction normally receive a mark or text note rather
-than another vector. Low-confidence geometry remains text-only and triggers the
-brief placement warning in Annotated work.
+Missing forces may receive a semantic vector plus a short question. Extra or
+wrong-object forces receive a cross or circle on the student's existing mark,
+not a replacement vector. Wrong directions are marked first; a corrected
+candidate vector is added only above the existing confidence threshold.
+Low-confidence geometry remains text-only and triggers the brief placement
+warning in Annotated work.
 
 Deterministic fixtures cover missing friction, an extra third-law force,
 incorrect incline normal, swapped gravity components, missing hanging-mass

@@ -150,3 +150,51 @@ test('offset replacement metadata is required by the incline fixture', () => {
   assert.equal(markup.vectorIssue, 'reversed')
   assert.match(markup.replacementFor, /student normal/)
 })
+
+test('maps legacy markup types into semantic annotation kinds', () => {
+  const feedback = validateFeedbackResult(
+    normalizeFeedbackResult(
+      baseFeedback([
+        {
+          type: 'dashed_box',
+          targetDescription: 'Legacy boxed equation',
+          region: { x: 0.2, y: 0.3, width: 0.2, height: 0.08 },
+          category: 'question',
+          confidence: 0.9,
+        },
+      ]),
+    ),
+  )
+
+  assert.equal(feedback.suggestedMarkup[0].kind, 'circle')
+  assert.equal(feedback.suggestedMarkup[0].type, 'dashed_box')
+  assert.deepEqual(feedback.suggestedMarkup[0].targetRegion, {
+    x: 0.2,
+    y: 0.3,
+    width: 0.2,
+    height: 0.08,
+  })
+})
+
+test('limits on-image notes to one sentence and fifteen words', () => {
+  const noteText =
+    'This note contains far too many words for restrained teacher markup and should be shortened before it reaches the page. A second sentence must disappear.'
+  const feedback = validateFeedbackResult(
+    normalizeFeedbackResult(
+      baseFeedback([
+        {
+          kind: 'question_note',
+          targetDescription: 'Long conceptual prompt',
+          noteText,
+          anchor: { x: 0.5, y: 0.5 },
+          category: 'question',
+          confidence: 0.9,
+        },
+      ]),
+    ),
+  )
+  const normalizedText = feedback.suggestedMarkup[0].noteText
+
+  assert.equal(normalizedText.trim().split(/\s+/u).length, 15)
+  assert.doesNotMatch(normalizedText, /second sentence/i)
+})

@@ -1678,8 +1678,15 @@ textarea:disabled {
   stroke-dasharray: 0.018 0.009;
 }
 
+.annotation-circle-mark {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.0035;
+}
+
 .annotation-underline-mark,
 .annotation-check-mark,
+.annotation-cross-mark,
 .annotation-leader {
   fill: none;
   stroke: currentColor;
@@ -1688,11 +1695,15 @@ textarea:disabled {
 }
 
 .annotation-underline-mark {
-  stroke-width: 0.007;
+  stroke-width: 0.0045;
 }
 
 .annotation-check-mark {
-  stroke-width: 0.01;
+  stroke-width: 0.007;
+}
+
+.annotation-cross-mark {
+  stroke-width: 0.0045;
 }
 
 .annotation-note-region {
@@ -1776,6 +1787,24 @@ textarea:disabled {
   pointer-events: none;
 }
 
+.annotation-note-local {
+  align-items: center;
+  border: 0;
+  border-radius: 2px;
+  padding: 2px 3px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: none;
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.annotation-note-local.category-issue,
+.annotation-note-local.category-hint,
+.annotation-note-local.category-question,
+.annotation-note-local.category-praise {
+  background: rgba(255, 255, 255, 0.86);
+}
+
 .annotation-note.category-issue {
   color: #a82f27;
   background: rgba(255, 247, 244, 0.97);
@@ -1800,6 +1829,10 @@ textarea:disabled {
 .annotation-note.note-style-emphasis {
   border-left-width: 6px;
   font-weight: 900;
+}
+
+.annotation-note-local.note-style-emphasis {
+  border: 0;
 }
 
 .primary-card {

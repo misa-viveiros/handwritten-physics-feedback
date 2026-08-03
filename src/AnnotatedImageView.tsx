@@ -14,6 +14,7 @@ type AnnotationLayout = {
   color: string
   target: Point
   noteBox?: Rect
+  noteIsLocal: boolean
   showLeader: boolean
   vectorLabelPoint?: Point
 }
@@ -71,7 +72,7 @@ export function AnnotatedImageView({
       annotations.filter((annotation) => {
         const lineId = annotation.lineId ?? annotation.targetLineId
         const isPraise =
-          annotation.category === 'praise' || annotation.type === 'check'
+          annotation.category === 'praise' || getAnnotationKind(annotation) === 'check'
         return !(lineId && crossedOutLineIds.has(lineId) && isPraise)
       }),
     [annotations, crossedOutLineIds],
@@ -83,7 +84,7 @@ export function AnnotatedImageView({
         (annotation) =>
           isLocalized(annotation) &&
           (annotation.confidence ?? 1) >=
-            (annotation.type === 'physics_vector'
+            (getAnnotationKind(annotation) === 'physics_vector'
               ? vectorConfidenceFloor
               : localizationConfidenceFloor),
       ),
@@ -102,7 +103,7 @@ export function AnnotatedImageView({
       Boolean(annotation.noteText?.trim() || annotation.targetDescription.trim()) &&
       (!isLocalized(annotation) ||
         (annotation.confidence ?? 1) <
-          (annotation.type === 'physics_vector'
+          (getAnnotationKind(annotation) === 'physics_vector'
             ? vectorConfidenceFloor
             : localizationConfidenceFloor)),
   )
@@ -196,12 +197,12 @@ export function AnnotatedImageView({
               </svg>
               <div className="annotation-note-layer">
                 {layouts.map(
-                  ({ annotation, category, noteBox }) =>
+                  ({ annotation, category, noteBox, noteIsLocal }) =>
                     annotation.noteText &&
                     noteBox && (
                       <div
                         aria-label={annotation.noteText}
-                        className={`annotation-note category-${category} note-style-${
+                        className={`annotation-note ${noteIsLocal ? 'annotation-note-local' : 'annotation-note-margin'} category-${category} note-style-${
                           annotation.noteStyle ?? 'handwritten'
                         }`}
                         key={`${annotation.id}-note`}
@@ -258,11 +259,11 @@ function AnnotationShape({
   const region = annotation.region
     ? mapRectToPage(annotation.region)
     : undefined
-  const type = annotation.type
+  const kind = getAnnotationKind(annotation)
 
   return (
     <g
-      className={`annotation annotation-${type} category-${category}`}
+      className={`annotation annotation-${kind} category-${category}`}
       style={{ color }}
       aria-label={
         annotation.noteText?.trim() || `${category} feedback annotation`
@@ -276,9 +277,19 @@ function AnnotationShape({
         />
       )}
 
-      {region && (type === 'circle' || type === 'dashed_box') && (
+      {region && kind === 'circle' && annotation.type !== 'dashed_box' && (
+        <ellipse
+          className="annotation-circle-mark"
+          cx={region.x + region.width / 2}
+          cy={region.y + region.height / 2}
+          rx={region.width / 2 + 0.006}
+          ry={region.height / 2 + 0.006}
+        />
+      )}
+
+      {region && annotation.type === 'dashed_box' && (
         <rect
-          className="annotation-box"
+          className="annotation-box legacy-dashed-box"
           x={region.x}
           y={region.y}
           width={region.width}
@@ -287,7 +298,7 @@ function AnnotationShape({
         />
       )}
 
-      {region && type === 'underline' && (
+      {region && kind === 'underline' && (
         <path
           className="annotation-underline-mark"
           d={`M ${region.x} ${clamp(region.y + region.height + 0.012)} C ${clamp(
@@ -300,7 +311,7 @@ function AnnotationShape({
         />
       )}
 
-      {type === 'check' && (
+      {kind === 'check' && (
         <path
           className="annotation-check-mark"
           d={`M ${target.x - 0.014} ${target.y} L ${target.x - 0.003} ${
@@ -309,26 +320,11 @@ function AnnotationShape({
         />
       )}
 
-      {type === 'question_mark' && (
-        <foreignObject
-          x={target.x - 0.02}
-          y={target.y - 0.032}
-          width="0.05"
-          height="0.065"
-        >
-          <div className="annotation-question-mark">?</div>
-        </foreignObject>
-      )}
-
-      {region && type === 'note' && (
-        <rect
-          className="annotation-note-region"
-          x={region.x}
-          y={region.y}
-          width={region.width}
-          height={region.height}
-          rx="0.008"
-        />
+      {region && kind === 'cross' && (
+        <g className="annotation-cross-mark">
+          <path d={`M ${region.x + 0.004} ${region.y + 0.004} L ${region.x + region.width - 0.004} ${region.y + region.height - 0.004}`} />
+          <path d={`M ${region.x + region.width - 0.004} ${region.y + 0.004} L ${region.x + 0.004} ${region.y + region.height - 0.004}`} />
+        </g>
       )}
 
       {layout.showLeader && noteBox && (
@@ -452,9 +448,11 @@ function prioritizeAnnotations(
 ) {
   const selected: SuggestedMarkup[] = []
   const primary =
+    annotations.find((annotation) => annotation.isPrimaryIssue) ??
     annotations.find(
       (annotation) =>
-        annotation.lineId === primaryLineId &&
+        (annotation.lineId === primaryLineId ||
+          annotation.targetLineId === primaryLineId) &&
         getCategory(annotation) !== 'praise',
     ) ??
     annotations.find((annotation) => getCategory(annotation) === 'issue') ??
@@ -464,41 +462,28 @@ function prioritizeAnnotations(
     selected.push(primary)
   }
 
-  const hint = annotations.find(
-    (annotation) =>
-      !selected.includes(annotation) &&
-      (getCategory(annotation) === 'hint' ||
-        getCategory(annotation) === 'question'),
-  )
-  if (hint) {
-    selected.push(hint)
+  const primaryLineIdResolved = primary?.lineId ?? primary?.targetLineId
+  for (const annotation of annotations) {
+    if (selected.length >= 3) break
+    const annotationLineId = annotation.lineId ?? annotation.targetLineId
+    const isRelated = Boolean(
+      primary &&
+        ((primary.issueId && annotation.issueId === primary.issueId) ||
+          (primaryLineIdResolved && annotationLineId === primaryLineIdResolved)),
+    )
+    if (!selected.includes(annotation) && isRelated) {
+      selected.push(annotation)
+    }
   }
 
   const praise = annotations.find(
     (annotation) =>
       !selected.includes(annotation) &&
-      (annotation.type === 'check' || getCategory(annotation) === 'praise'),
+      (getAnnotationKind(annotation) === 'check' ||
+        getCategory(annotation) === 'praise'),
   )
-  if (praise) {
+  if (praise && selected.length < 3) {
     selected.push(praise)
-  }
-
-  for (const annotation of annotations) {
-    if (selected.length >= 3) {
-      break
-    }
-    const alreadyHasPraise = selected.some(
-      (item) => item.type === 'check' || getCategory(item) === 'praise',
-    )
-    if (
-      alreadyHasPraise &&
-      (annotation.type === 'check' || getCategory(annotation) === 'praise')
-    ) {
-      continue
-    }
-    if (!selected.includes(annotation)) {
-      selected.push(annotation)
-    }
   }
 
   return selected.slice(0, 3)
@@ -511,20 +496,31 @@ function layoutAnnotations(
   const occupiedNotes: Rect[] = []
   const occupiedChecks: Rect[] = []
   const mappedWriting = avoidRegions.map(mapRectToPage)
+  const annotationObstacles = annotations
+    .map(getAnnotationObstacle)
+    .filter((region): region is Rect => Boolean(region))
   let hasLeader = false
 
   return annotations.map((annotation) => {
     const category = getCategory(annotation)
     const target = getDisplayTarget(annotation)
+    const kind = getAnnotationKind(annotation)
     const noteBox =
-      annotation.noteText && annotation.type !== 'check'
-        ? placeMarginNote(annotation, target, occupiedNotes, occupiedChecks)
+      annotation.noteText && kind !== 'check'
+        ? placeAnnotationNote(
+            annotation,
+            target,
+            [...mappedWriting, ...annotationObstacles],
+            occupiedNotes,
+            occupiedChecks,
+          )
         : undefined
+    const noteIsLocal = Boolean(noteBox && noteBox.x < marginStart)
 
     if (noteBox) {
       occupiedNotes.push(noteBox)
     }
-    if (annotation.type === 'check') {
+    if (kind === 'check') {
       occupiedChecks.push({
         x: target.x - 0.02,
         y: target.y - 0.04,
@@ -542,6 +538,7 @@ function layoutAnnotations(
     )
     const showLeader =
       Boolean(noteBox) &&
+      !noteIsLocal &&
       category !== 'praise' &&
       !lineWouldCrossWriting &&
       !hasLeader
@@ -556,20 +553,31 @@ function layoutAnnotations(
       category,
       color: categoryColors[category],
       target:
-        annotation.type === 'check' ? target : leaderTarget,
+        kind === 'check' ? target : leaderTarget,
       noteBox,
+      noteIsLocal,
       showLeader,
       vectorLabelPoint,
     }
   })
 }
 
-function placeMarginNote(
+function placeAnnotationNote(
   annotation: SuggestedMarkup,
   target: Point,
+  obstacles: Rect[],
   occupiedNotes: Rect[],
   occupiedChecks: Rect[],
 ): Rect | undefined {
+  const local = placeLocalNote(annotation, target, [
+    ...obstacles,
+    ...occupiedNotes,
+    ...occupiedChecks,
+  ])
+  if (local) {
+    return local
+  }
+
   const noteLines = Math.min(
     3,
     Math.max(1, Math.ceil((annotation.noteText?.length ?? 0) / 24)),
@@ -594,6 +602,89 @@ function placeMarginNote(
     }
   }
 
+  return undefined
+}
+
+function placeLocalNote(
+  annotation: SuggestedMarkup,
+  target: Point,
+  obstacles: Rect[],
+): Rect | undefined {
+  const textLength = annotation.noteText?.trim().length ?? 0
+  const width = clamp(0.075 + textLength * 0.0032, 0.11, 0.2)
+  const lineCount = Math.max(1, Math.ceil(textLength / 24))
+  const height = clamp(0.025 + lineCount * 0.025, 0.05, 0.082)
+  const gap = 0.012
+  const targetRegion = annotation.region
+    ? mapRectToPage(annotation.region)
+    : { x: target.x - 0.015, y: target.y - 0.02, width: 0.03, height: 0.04 }
+  const candidates = [
+    { x: targetRegion.x + targetRegion.width + gap, y: target.y - height / 2 },
+    { x: targetRegion.x + targetRegion.width + gap, y: targetRegion.y - height - gap },
+    { x: targetRegion.x + targetRegion.width + gap, y: targetRegion.y + targetRegion.height + gap },
+    { x: target.x - width / 2, y: targetRegion.y - height - gap },
+    { x: target.x - width / 2, y: targetRegion.y + targetRegion.height + gap },
+  ]
+  const ordered = orderLocalCandidates(candidates, annotation.notePlacement)
+
+  for (const candidate of ordered) {
+    const box = { ...candidate, width, height }
+    const isInsidePage =
+      box.x >= pageStart + 0.008 &&
+      box.x + box.width <= pageEnd - 0.008 &&
+      box.y >= 0.012 &&
+      box.y + box.height <= 0.988
+    if (
+      isInsidePage &&
+      obstacles.every((other) => overlapRatio(box, other) <= 0.01)
+    ) {
+      return box
+    }
+  }
+
+  return undefined
+}
+
+function orderLocalCandidates(
+  candidates: Point[],
+  placement?: SuggestedMarkup['notePlacement'],
+): Point[] {
+  const preferredIndex =
+    placement === 'right'
+      ? 0
+      : placement === 'above'
+        ? 3
+        : placement === 'below'
+          ? 4
+          : -1
+  if (preferredIndex < 0) {
+    return candidates
+  }
+  return [candidates[preferredIndex], ...candidates.filter((_, index) => index !== preferredIndex)]
+}
+
+function getAnnotationObstacle(annotation: SuggestedMarkup): Rect | undefined {
+  if (annotation.region) {
+    const region = mapRectToPage(annotation.region)
+    return {
+      x: region.x - 0.006,
+      y: region.y - 0.006,
+      width: region.width + 0.012,
+      height: region.height + 0.012,
+    }
+  }
+  if (isPhysicsVector(annotation)) {
+    const points = getPhysicsVectorPoints(annotation)
+    if (!points) return undefined
+    const x = Math.min(points.origin.x, points.endpoint.x) - 0.015
+    const y = Math.min(points.origin.y, points.endpoint.y) - 0.02
+    return {
+      x,
+      y,
+      width: Math.abs(points.endpoint.x - points.origin.x) + 0.03,
+      height: Math.abs(points.endpoint.y - points.origin.y) + 0.04,
+    }
+  }
   return undefined
 }
 
@@ -671,17 +762,17 @@ function getCategory(annotation: SuggestedMarkup): AnnotationCategory {
   if (annotation.category) {
     return annotation.category
   }
-  if (annotation.type === 'check') {
+  if (getAnnotationKind(annotation) === 'check') {
     return 'praise'
   }
-  if (annotation.type === 'question_mark') {
+  if (getAnnotationKind(annotation) === 'question_note') {
     return 'question'
   }
   return 'issue'
 }
 
 function isLocalized(annotation: SuggestedMarkup) {
-  if (annotation.type === 'physics_vector') {
+  if (getAnnotationKind(annotation) === 'physics_vector') {
     return Boolean(
       annotation.origin &&
         (annotation.endpoint ||
@@ -701,6 +792,7 @@ function isPhysicsVector(
   annotation: SuggestedMarkup,
 ): annotation is PhysicsVectorMarkup {
   return (
+    getAnnotationKind(annotation) === 'physics_vector' &&
     annotation.type === 'physics_vector' &&
     Boolean(annotation.vectorKind && annotation.origin) &&
     typeof annotation.confidence === 'number' &&
@@ -709,6 +801,10 @@ function isPhysicsVector(
         (annotation.direction && annotation.relativeLength !== undefined),
     )
   )
+}
+
+function getAnnotationKind(annotation: SuggestedMarkup) {
+  return annotation.kind
 }
 
 function getPhysicsVectorPoints(annotation: PhysicsVectorMarkup) {
