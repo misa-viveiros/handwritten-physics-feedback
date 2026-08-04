@@ -57,6 +57,8 @@ import {
 } from './studyLog'
 import {
   problemBank,
+  problemExamples,
+  type ExampleProblem,
   type PracticeProblem,
 } from './problems/problemBank'
 import type {
@@ -96,6 +98,8 @@ type ProblemSession = {
   activeAttemptId: string | null
 }
 
+type ProblemOption = PracticeProblem | ExampleProblem
+
 const maxImageBytes = 8 * 1024 * 1024
 const maxPdfBytes = 20 * 1024 * 1024
 const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
@@ -130,7 +134,8 @@ const workStatusLabels: Record<HandwritingWorkStatus, string> = {
 function App() {
   const previewUrlsRef = useRef<Set<string>>(new Set())
   const problemInputRef = useRef<HTMLTextAreaElement | null>(null)
-  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const pendingUploadSourceRef = useRef<'camera' | 'image'>('image')
   const pdfImportSessionRef = useRef<PdfImportSession | null>(null)
   const apiKeyMenuRef = useRef<HTMLDivElement | null>(null)
@@ -154,7 +159,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null)
   const [pendingProblemChange, setPendingProblemChange] = useState<
-    PracticeProblem | 'blank' | null
+    ProblemOption | 'blank' | null
   >(null)
   const [workedSolutionConfirmationOpen, setWorkedSolutionConfirmationOpen] =
     useState(false)
@@ -290,19 +295,13 @@ function App() {
   }
 
   function openImagePicker(mode: 'camera' | 'upload') {
-    const input = imageInputRef.current
+    const input =
+      mode === 'camera' ? cameraInputRef.current : uploadInputRef.current
     if (!input || activeRequest !== null || stage !== 'input') {
       return
     }
     input.value = ''
     pendingUploadSourceRef.current = mode === 'camera' ? 'camera' : 'image'
-    if (mode === 'camera') {
-      input.setAttribute('accept', 'image/*')
-      input.setAttribute('capture', 'environment')
-    } else {
-      input.setAttribute('accept', 'image/*,application/pdf')
-      input.removeAttribute('capture')
-    }
     input.click()
   }
 
@@ -522,7 +521,7 @@ function App() {
     previewUrlsRef.current.delete(url)
   }
 
-  function applyProblemChange(problem: PracticeProblem | 'blank') {
+  function applyProblemChange(problem: ProblemOption | 'blank') {
     studyLogRef.current.metrics.resetActions += 1
     recordStudyEvent('problem_reset')
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
@@ -538,7 +537,7 @@ function App() {
     requestAnimationFrame(() => problemInputRef.current?.focus())
   }
 
-  function requestProblemChange(problem: PracticeProblem | 'blank') {
+  function requestProblemChange(problem: ProblemOption | 'blank') {
     if (hasAnalyzedAttempts) {
       setPendingProblemChange(problem)
       return
@@ -555,6 +554,15 @@ function App() {
     const problem = problemBank.find((candidate) => candidate.id === problemId)
     if (problem) {
       requestProblemChange(problem)
+    }
+  }
+
+  function handleExampleSelection(exampleId: string) {
+    const example = problemExamples.find(
+      (candidate) => candidate.id === exampleId,
+    )
+    if (example) {
+      requestProblemChange(example)
     }
   }
 
@@ -1332,7 +1340,11 @@ function App() {
             <label htmlFor="practice-problem">Choose a practice problem</label>
             <select
               id="practice-problem"
-              value={session.problemId ?? 'custom'}
+              value={
+                problemBank.some((problem) => problem.id === session.problemId)
+                  ? session.problemId
+                  : 'custom'
+              }
               onChange={(event) => handleProblemSelection(event.target.value)}
               disabled={activeRequest !== null}
             >
@@ -1364,9 +1376,31 @@ function App() {
             </label>
           )}
 
-          <label className="field-label" htmlFor="problem-statement">
-            Problem statement
-          </label>
+          <div className="problem-statement-heading">
+            <label className="field-label" htmlFor="problem-statement">
+              Problem statement
+            </label>
+            <select
+              aria-label="Examples"
+              className="example-picker"
+              disabled={activeRequest !== null}
+              onChange={(event) => handleExampleSelection(event.target.value)}
+              value={
+                problemExamples.some(
+                  (example) => example.id === session.problemId,
+                )
+                  ? session.problemId
+                  : ''
+              }
+            >
+              <option value="">Examples</option>
+              {problemExamples.map((example, index) => (
+                <option key={example.id} value={example.id}>
+                  {index + 1}
+                </option>
+              ))}
+            </select>
+          </div>
           <textarea
             id="problem-statement"
             value={problemStatement}
@@ -1402,7 +1436,7 @@ function App() {
               </button>
             </div>
             <span className="upload-app-hint">
-              From Samsung Notes, export your handwritten page as an image or
+              From your Notes app, export your handwritten page as an image or
               PDF, then upload it here.
             </span>
             {uploadSource?.sourceType === 'pdf' &&
@@ -1430,23 +1464,27 @@ function App() {
                 </label>
               )}
             <input
-              aria-label="Choose handwritten solution image or PDF"
+              aria-label="Take a photo of handwritten solution"
               className="image-file-input"
-              id="solution-image"
+              id="solution-camera"
               type="file"
-              accept="image/*,application/pdf"
+              accept="image/*"
+              capture="environment"
               onChange={handleImageChange}
               disabled={stage !== 'input' || activeRequest !== null}
-              ref={imageInputRef}
+              ref={cameraInputRef}
+            />
+            <input
+              aria-label="Choose handwritten solution image or PDF from gallery or files"
+              className="image-file-input"
+              id="solution-upload"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+              onChange={handleImageChange}
+              disabled={stage !== 'input' || activeRequest !== null}
+              ref={uploadInputRef}
             />
           </div>
-
-          <p className="privacy-notice">
-            This research prototype sends the selected image page and problem
-            statement to an external AI service for analysis. PDFs are rendered
-            in your browser first. Do not upload sensitive or personally
-            identifying information.
-          </p>
 
           {errorMessage && (
             <div className="error-message" role="alert">
@@ -2691,7 +2729,7 @@ function createAttempt(
   }
 }
 
-function createProblemSession(problem?: PracticeProblem): ProblemSession {
+function createProblemSession(problem?: ProblemOption): ProblemSession {
   const firstAttempt = createAttempt(1)
   return {
     problemId: problem?.id,

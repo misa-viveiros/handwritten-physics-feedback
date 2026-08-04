@@ -15,6 +15,105 @@ export type PracticeProblem = {
   studyRecommended: boolean
 }
 
+export type ExampleProblem = {
+  id: string
+  title: string
+  statement: string
+}
+
+export const problemExamples: ExampleProblem[] = [
+  {
+    id: 'example-1',
+    title: 'Example 1',
+    statement:
+      'A ball is dropped from rest from a height of 5.0 m. Neglect air resistance. How long does it take the ball to hit the ground? Use g=9.8 m/s^2',
+  },
+  {
+    id: 'example-2',
+    title: 'Example 2',
+    statement:
+      'A car starts from rest and accelerates uniformly at 2.0 m/s^2 for 6.0 s. How far does it travel?',
+  },
+  {
+    id: 'example-3',
+    title: 'Example 3',
+    statement:
+      'A 2.0 kg object accelerates at 3.0 m/s^2. What is the net force acting on the object?',
+  },
+  {
+    id: 'example-4',
+    title: 'Example 4',
+    statement:
+      'A 2.0 kg object accelerates at 3.0 m/s^2. What is the net force?',
+  },
+  {
+    id: 'example-5',
+    title: 'Example 5',
+    statement:
+      'A ball is thrown straight upward with an initial speed of 14.0 m/s. How long does it take to reach its highest point? Use g=9.8 m/s^2',
+  },
+  {
+    id: 'example-6',
+    title: 'Example 6',
+    statement:
+      'A ball is thrown upward from the roof of a 20.0 m-tall building with an initial speed of 8.0 m/s. How long does it take to reach the ground? Use g=9.8 m/s^2',
+  },
+  {
+    id: 'example-7',
+    title: 'Example 7',
+    statement:
+      'A box slides to the right across a rough horizontal floor and slows down. Draw and label a free-body diagram showing all forces acting on the box.',
+  },
+  {
+    id: 'example-8',
+    title: 'Example 8',
+    statement:
+      'A box slides to the right across a rough horizontal floor and slows down. Draw and label all forces acting on the box.',
+  },
+  {
+    id: 'example-9',
+    title: 'Example 9',
+    statement:
+      'A book rests motionless on a horizontal table. Draw a free-body diagram showing all forces acting on the book.',
+  },
+  {
+    id: 'example-10',
+    title: 'Example 10',
+    statement:
+      'A 5.0 kg block rests on a frictionless 30° incline. Draw and label all forces acting on the block.',
+  },
+  {
+    id: 'example-11',
+    title: 'Example 11',
+    statement:
+      'A block rests on a frictionless incline at angle θ. Resolve the gravitational force into components parallel and perpendicular to the incline.',
+  },
+  {
+    id: 'example-12',
+    title: 'Example 12',
+    statement:
+      'A 3.0 kg box is pulled horizontally to the right with a force of 15 N. Friction exerts a 6 N force to the left. Find the acceleration of the box.',
+  },
+  {
+    id: 'example-13',
+    title: 'Example 13',
+    statement:
+      'A 2.0 kg cart accelerates at 3.0 m/s^2. Find the net force acting on the cart.',
+  },
+  {
+    id: 'example-14',
+    title: 'Example 14',
+    statement:
+      'A cart moves at a constant speed of 4.0 m/s for 5.0 s. How far does it travel?',
+  },
+  {
+    id: 'example-15',
+    title: 'Example 15',
+    statement:
+      "A 4.0 kg crate is pushed to the right with 24 N. Kinetic friction acts to the left with magnitude 8.0 N. Find the crate's acceleration.",
+  },
+]
+
 export const problemBank: PracticeProblem[] = [
   {
     id: 'kin-drop-5m',

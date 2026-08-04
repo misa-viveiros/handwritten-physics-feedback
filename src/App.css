@@ -273,6 +273,31 @@
   font-weight: 800;
 }
 
+.problem-statement-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.problem-statement-heading .field-label {
+  margin: 0;
+}
+
+.example-picker {
+  width: 76px;
+  min-height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 5px;
+  color: #4c5965;
+  background: #fff;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
 .problem-picker {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -420,7 +445,6 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.privacy-notice,
 .loading-message,
 .error-message,
 .notice-message {
@@ -428,12 +452,6 @@ textarea:focus-visible,
   padding: 9px 10px;
   font-size: 0.76rem;
   line-height: 1.35;
-}
-
-.privacy-notice {
-  margin: 0 0 10px;
-  color: #596572;
-  background: #f3f5f4;
 }
 
 .error-message {
