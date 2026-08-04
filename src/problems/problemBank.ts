@@ -112,6 +112,24 @@ export const problemExamples: ExampleProblem[] = [
     statement:
       "A 4.0 kg crate is pushed to the right with 24 N. Kinetic friction acts to the left with magnitude 8.0 N. Find the crate's acceleration.",
   },
+  {
+    id: 'example-16',
+    title: 'Example 16',
+    statement:
+      'Two blocks, m_1=2.0 kg and m_2=4.0 kg, rest on a frictionless horizontal surface. The blocks are connected by a light rope. A horizontal force F pulls m_2 to the right. Draw separate free-body diagrams for both blocks.',
+  },
+  {
+    id: 'example-17',
+    title: 'Example 17',
+    statement:
+      'A 10 kg box rests on a horizontal floor. A person pushes horizontally with 20 N, but the box does not move. The coefficient of static friction is μ_s=0.50. Draw the FBD and determine the static-friction force.',
+  },
+  {
+    id: 'example-18',
+    title: 'Example 18',
+    statement:
+      'A car moves at constant speed around a flat circular track. Friction between the tires and road provides the force necessary for circular motion. Draw an FBD for the car.',
+  },
 ]
 
 export const problemBank: PracticeProblem[] = [
