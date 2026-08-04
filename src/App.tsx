@@ -52,8 +52,27 @@ import {
   addStudyEvent,
   createStudySessionLog,
   downloadStudyLog,
-  getVectorMetrics,
+  endStudySession,
+  getStudyDurationSeconds,
+  nextStudyExportStatus,
+  recordAnnotationsRendered,
+  recordApiError,
+  recordAssistanceLevel,
+  recordClientError,
+  recordDiagnosisShown,
+  recordReset,
+  recordRevisionResult,
+  recordRevisionSubmitted,
+  recordSourceSelected,
+  recordTranscriptionLineEdited,
+  recordTranscriptionReviewCompleted,
+  recordTranscriptionReviewOpened,
+  recordWorkedSolutionUnlocked,
+  recordWorkedSolutionViewed,
   studyModeEnabled,
+  studyTranscriptionEnabled,
+  type StudyExportStatus,
+  type StudySessionLog,
 } from './studyLog'
 import {
   problemBank,
@@ -139,9 +158,14 @@ function App() {
   const pendingUploadSourceRef = useRef<'camera' | 'image'>('image')
   const pdfImportSessionRef = useRef<PdfImportSession | null>(null)
   const apiKeyMenuRef = useRef<HTMLDivElement | null>(null)
-  const studyLogRef = useRef(createStudySessionLog())
+  const studyLogRef = useRef<StudySessionLog | null>(null)
   const studyEditedLinesRef = useRef<Set<string>>(new Set())
+  const [studyParticipantId, setStudyParticipantId] = useState('')
   const [studyTaskId, setStudyTaskId] = useState('')
+  const [researcherNote, setResearcherNote] = useState('')
+  const [studyExportStatus, setStudyExportStatus] =
+    useState<StudyExportStatus>('not_exported')
+  const [, setStudyRenderVersion] = useState(0)
   const [apiKey, setApiKey] = useState(readSessionApiKey)
   const [apiKeyDraft, setApiKeyDraft] = useState(apiKey)
   const [apiKeyMenuOpen, setApiKeyMenuOpen] = useState(false)
@@ -194,6 +218,19 @@ function App() {
   const problemLocked = session.attempts.some(
     (attempt) => attempt.interpretation,
   )
+  const activeStudyLog = studyLogRef.current
+  const studySessionRunning = Boolean(
+    activeStudyLog && !activeStudyLog.explicitlyEnded,
+  )
+
+  useEffect(() => {
+    if (!studyModeEnabled || !studySessionRunning) return
+    const timer = window.setInterval(
+      () => setStudyRenderVersion((value) => value + 1),
+      1000,
+    )
+    return () => window.clearInterval(timer)
+  }, [studySessionRunning])
   useEffect(() => {
     const previewUrls = previewUrlsRef.current
     return () => {
@@ -267,19 +304,95 @@ function App() {
 
   function recordStudyEvent(
     type: string,
-    details?: Record<string, string | number | boolean>,
+    data?: Record<string, string | number | boolean | null>,
   ) {
-    if (studyModeEnabled) {
-      addStudyEvent(studyLogRef.current, type, details)
+    const log = studyLogRef.current
+    if (!studyModeEnabled || !log || log.explicitlyEnded) return
+    addStudyEvent(log, type, data)
+    markStudyLogChanged()
+  }
+
+  function markStudyLogChanged() {
+    setStudyExportStatus((status) => nextStudyExportStatus(status))
+    setStudyRenderVersion((value) => value + 1)
+  }
+
+  function mutateStudyLog(mutator: (log: StudySessionLog) => void) {
+    const log = studyLogRef.current
+    if (!studyModeEnabled || !log || log.explicitlyEnded) return
+    mutator(log)
+    markStudyLogChanged()
+  }
+
+  function startStudySession() {
+    const existing = studyLogRef.current
+    if (
+      existing &&
+      existing.events.length > 0 &&
+      studyExportStatus !== 'exported' &&
+      !window.confirm(
+        'This session has not been exported yet. Start a new session anyway?',
+      )
+    ) {
+      return
     }
+    const nextLog = createStudySessionLog({
+      participantId: studyParticipantId,
+      taskId: studyTaskId || session.problemId,
+      problemStatement,
+    })
+    nextLog.researcherNote = researcherNote.trim()
+    studyLogRef.current = nextLog
+    studyEditedLinesRef.current.clear()
+    setStudyExportStatus('not_exported')
+    setStudyRenderVersion((value) => value + 1)
+  }
+
+  function finishStudySession() {
+    const log = studyLogRef.current
+    if (!log || log.explicitlyEnded) return
+    endStudySession(log)
+    markStudyLogChanged()
   }
 
   function exportStudyLog() {
-    studyLogRef.current.taskId = studyTaskId.trim() || session.problemId
+    const log = studyLogRef.current
+    if (!log) return
+    log.participantId = studyParticipantId.trim() || undefined
+    log.taskId = studyTaskId.trim() || session.problemId
+    log.problemStatement = problemStatement.trim() || undefined
+    log.researcherNote = researcherNote.trim()
     downloadStudyLog(
-      studyLogRef.current,
+      log,
       confirmedLines.map((line) => line.confirmedText),
+      studyTranscriptionEnabled,
     )
+    setStudyExportStatus('exported')
+    setStudyRenderVersion((value) => value + 1)
+  }
+
+  function updateResearcherNote(value: string) {
+    setResearcherNote(value)
+    const log = studyLogRef.current
+    if (!log) return
+    log.researcherNote = value
+    markStudyLogChanged()
+  }
+
+  function updateStudyParticipant(value: string) {
+    setStudyParticipantId(value)
+    const log = studyLogRef.current
+    if (!log) return
+    log.participantId = value.trim() || undefined
+    markStudyLogChanged()
+  }
+
+  function updateStudyTask(value: string) {
+    setStudyTaskId(value)
+    const log = studyLogRef.current
+    if (!log) return
+    log.taskId = value.trim() || undefined
+    markStudyLogChanged()
   }
 
   function updateAttemptById(
@@ -319,6 +432,7 @@ function App() {
 
     const uploadError = validateUploadFile(file)
     if (uploadError) {
+      mutateStudyLog((log) => recordClientError(log, 'invalid-upload'))
       clearImage()
       event.target.value = ''
       setErrorMessage(uploadError)
@@ -374,6 +488,7 @@ function App() {
         renderedHeight: renderedPage.renderedHeight,
       })
     } catch {
+      mutateStudyLog((log) => recordClientError(log, 'pdf-import'))
       await replacePdfImportSession(null)
       clearImage()
       setErrorMessage(
@@ -422,6 +537,7 @@ function App() {
         pdfPageCount: pdfSession.pageCount,
       })
     } catch {
+      mutateStudyLog((log) => recordClientError(log, 'pdf-page-render'))
       setErrorMessage(
         "We couldn't render this PDF page. Try another page or export the note as an image.",
       )
@@ -462,24 +578,7 @@ function App() {
       completedAt: undefined,
       stage: 'input',
     }))
-    const uploadTimestamp = new Date().toISOString()
-    studyLogRef.current.metrics.imageUploadTimestamp = uploadTimestamp
-    studyLogRef.current.metrics.uploadSource = {
-      sourceType: source.sourceType,
-      ...(source.pdfPageNumber
-        ? { pdfPageNumber: source.pdfPageNumber }
-        : {}),
-      ...(source.pdfPageCount ? { pdfPageCount: source.pdfPageCount } : {}),
-    }
-    recordStudyEvent('image_uploaded', {
-      attemptNumber,
-      timestamp: uploadTimestamp,
-      sourceType: source.sourceType,
-      ...(source.pdfPageNumber
-        ? { pdfPageNumber: source.pdfPageNumber }
-        : {}),
-      ...(source.pdfPageCount ? { pdfPageCount: source.pdfPageCount } : {}),
-    })
+    mutateStudyLog((log) => recordSourceSelected(log, source))
     setActiveLineId(null)
 
     if (previousAttempt?.imageFingerprint === nextFingerprint) {
@@ -522,8 +621,7 @@ function App() {
   }
 
   function applyProblemChange(problem: ProblemOption | 'blank') {
-    studyLogRef.current.metrics.resetActions += 1
-    recordStudyEvent('problem_reset')
+    mutateStudyLog((log) => recordReset(log, 'problem'))
     previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     previewUrlsRef.current.clear()
     void replacePdfImportSession(null)
@@ -592,8 +690,7 @@ function App() {
     }
     revokePreviewUrl(activeAttempt.imageUrl ?? null)
     void replacePdfImportSession(null)
-    studyLogRef.current.metrics.resetActions += 1
-    recordStudyEvent('attempt_reset', { attemptNumber })
+    mutateStudyLog((log) => recordReset(log, `attempt-${attemptNumber}`))
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...createAttempt(attempt.attemptNumber, attempt.id),
       createdAt: attempt.createdAt,
@@ -609,7 +706,6 @@ function App() {
     }
     const nextAttempt = createAttempt(session.attempts.length + 1)
     void replacePdfImportSession(null)
-    studyLogRef.current.metrics.revisions += 1
     recordStudyEvent('revision_started', {
       attemptNumber: nextAttempt.attemptNumber,
     })
@@ -659,6 +755,8 @@ function App() {
 
     const attemptId = activeAttempt.id
     const interpretationStartedAt = performance.now()
+    let responseStatus: number | null = null
+    recordStudyEvent('analysis_started', { stage: 'interpretation' })
     setActiveRequest('interpreting')
 
     try {
@@ -675,6 +773,7 @@ function App() {
           },
         }),
       })
+      responseStatus = response.status
 
       const payload: unknown = await response.json().catch(() => null)
 
@@ -696,16 +795,15 @@ function App() {
       )
       const uncertainLineCount =
         nextInterpretation.lines.filter(lineNeedsConfirmation).length
-      studyLogRef.current.metrics.interpretationDurationMs +=
-        interpretationDurationMs
-      studyLogRef.current.metrics.interpretedLines =
-        nextInterpretation.lines.length
-      studyLogRef.current.metrics.uncertainLines = uncertainLineCount
-      recordStudyEvent('interpretation_completed', {
+      recordStudyEvent('analysis_completed', {
+        stage: 'interpretation',
         durationMs: interpretationDurationMs,
         lines: nextInterpretation.lines.length,
         uncertainLines: uncertainLineCount,
       })
+      mutateStudyLog((log) =>
+        recordTranscriptionReviewOpened(log, uncertainLineCount),
+      )
 
       updateAttemptById(attemptId, (attempt) => ({
         ...attempt,
@@ -722,8 +820,9 @@ function App() {
         stage: 'interpretation',
       }))
     } catch (error) {
-      studyLogRef.current.metrics.apiFailures += 1
-      recordStudyEvent('api_failure', { stage: 'interpretation' })
+      mutateStudyLog((log) =>
+        recordApiError(log, 'interpret-solution', responseStatus),
+      )
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -741,8 +840,12 @@ function App() {
     const studyEditKey = `${activeAttempt.id}:${lineId}`
     if (!studyEditedLinesRef.current.has(studyEditKey)) {
       studyEditedLinesRef.current.add(studyEditKey)
-      studyLogRef.current.metrics.transcriptionEdits += 1
-      recordStudyEvent('transcription_edited')
+      const sourceLine = interpretation?.lines.find(
+        (line) => line.id === lineId,
+      )
+      mutateStudyLog((log) =>
+        recordTranscriptionLineEdited(log, lineId, sourceLine?.confidence),
+      )
     }
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
@@ -756,7 +859,7 @@ function App() {
         : undefined,
       lineStatuses: {
         ...attempt.lineStatuses,
-        [lineId]: 'needs_correction',
+        [lineId]: undefined,
       },
       contentDirty: true,
     }))
@@ -769,7 +872,6 @@ function App() {
     if (!activeAttempt) {
       return
     }
-    studyLogRef.current.metrics.crossedOutStatusCorrections += 1
     recordStudyEvent('crossed_out_status_corrected')
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
@@ -803,8 +905,7 @@ function App() {
     if (!activeAttempt || !interpretation) {
       return
     }
-    studyLogRef.current.metrics.resetActions += 1
-    recordStudyEvent('interpretation_edits_reset')
+    mutateStudyLog((log) => recordReset(log, 'interpretation-edits'))
     updateAttemptById(activeAttempt.id, (attempt) => ({
       ...attempt,
       interpretation: attempt.interpretation
@@ -1006,6 +1107,11 @@ function App() {
       ...attempt,
       confirmedLines: nextConfirmedLines,
     }))
+    mutateStudyLog((log) => {
+      if (!log.transcription.reviewCompleted) {
+        recordTranscriptionReviewCompleted(log)
+      }
+    })
     setErrorMessage(null)
 
     if (feedback && diagnosedTranscriptionSnapshot === nextSnapshot) {
@@ -1047,6 +1153,11 @@ function App() {
     )
 
     const diagnosisStartedAt = performance.now()
+    let responseStatus: number | null = null
+    recordStudyEvent('analysis_started', { stage: 'diagnosis' })
+    if (isNewRevisionAttempt) {
+      mutateStudyLog((log) => recordRevisionSubmitted(log))
+    }
     setActiveRequest('diagnosing')
 
     try {
@@ -1069,6 +1180,7 @@ function App() {
           feedbackLevel: requestedFeedbackLevel,
         }),
       })
+      responseStatus = response.status
       const payload: unknown = await response.json().catch(() => null)
 
       if (!response.ok) {
@@ -1105,27 +1217,26 @@ function App() {
       const diagnosisDurationMs = Math.round(
         performance.now() - diagnosisStartedAt,
       )
-      const vectorMetrics = getVectorMetrics(nextFeedback)
-      studyLogRef.current.metrics.diagnosisDurationMs += diagnosisDurationMs
-      studyLogRef.current.metrics.feedbackLevelShown =
-        nextAssistanceState.feedbackLevel
-      studyLogRef.current.metrics.coreIssueResolved =
-        assistanceComparison?.originalIssueResolved === 'yes'
-      studyLogRef.current.metrics.workedSolutionUnlocked =
-        nextAssistanceState.workedSolutionUnlocked
-      studyLogRef.current.metrics.vectorAnnotationsProposed +=
-        vectorMetrics.proposed
-      studyLogRef.current.metrics.vectorAnnotationsRendered +=
-        vectorMetrics.rendered
-      studyLogRef.current.metrics.textOnlyVectorFallbacks +=
-        vectorMetrics.textOnlyFallbacks
-      recordStudyEvent('diagnosis_completed', {
+      recordStudyEvent('analysis_completed', {
+        stage: 'diagnosis',
         durationMs: diagnosisDurationMs,
         feedbackLevel: nextAssistanceState.feedbackLevel,
         workedSolutionUnlocked:
           nextAssistanceState.workedSolutionUnlocked,
-        vectorsProposed: vectorMetrics.proposed,
-        vectorsRendered: vectorMetrics.rendered,
+      })
+      mutateStudyLog((log) => {
+        recordDiagnosisShown(log, nextFeedback)
+        recordAnnotationsRendered(log, nextFeedback)
+        recordAssistanceLevel(log, nextAssistanceState.feedbackLevel)
+        if (nextAssistanceState.workedSolutionUnlocked) {
+          recordWorkedSolutionUnlocked(log)
+        }
+        if (assistanceComparison) {
+          recordRevisionResult(
+            log,
+            getStudyRevisionResult(assistanceComparison, meaningfulRevision),
+          )
+        }
       })
       updateAttemptById(attemptId, (attempt) => ({
         ...attempt,
@@ -1140,8 +1251,9 @@ function App() {
         completedAt: new Date().toISOString(),
       }))
     } catch (error) {
-      studyLogRef.current.metrics.apiFailures += 1
-      recordStudyEvent('api_failure', { stage: 'diagnosis' })
+      mutateStudyLog((log) =>
+        recordApiError(log, 'diagnose-solution', responseStatus),
+      )
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -1165,6 +1277,7 @@ function App() {
     setWorkedSolutionConfirmationOpen(false)
     setErrorMessage(null)
     setActiveRequest('worked-solution')
+    let responseStatus: number | null = null
 
     try {
       const response = await fetch('/api/generate-worked-solution', {
@@ -1184,6 +1297,7 @@ function App() {
             assistanceState.workedSolutionUnlocked,
         }),
       })
+      responseStatus = response.status
       const payload: unknown = await response.json().catch(() => null)
 
       if (!response.ok) {
@@ -1199,8 +1313,7 @@ function App() {
           ? payload.workedSolution
           : payload
       const nextWorkedSolution = validateWorkedSolution(responseData)
-      studyLogRef.current.metrics.workedSolutionRevealed = true
-      recordStudyEvent('worked_solution_revealed')
+      mutateStudyLog((log) => recordWorkedSolutionViewed(log))
       updateAttemptById(activeAttempt.id, (attempt) => ({
         ...attempt,
         workedSolution: nextWorkedSolution,
@@ -1210,8 +1323,9 @@ function App() {
         },
       }))
     } catch (error) {
-      studyLogRef.current.metrics.apiFailures += 1
-      recordStudyEvent('api_failure', { stage: 'worked_solution' })
+      mutateStudyLog((log) =>
+        recordApiError(log, 'generate-worked-solution', responseStatus),
+      )
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -1313,15 +1427,6 @@ function App() {
                   Save for this tab
                 </button>
               </div>
-              {studyModeEnabled && (
-                <button
-                  className="export-study-log-button"
-                  onClick={exportStudyLog}
-                  type="button"
-                >
-                  Export session log
-                </button>
-              )}
             </section>
           )}
         </div>
@@ -1335,6 +1440,106 @@ function App() {
             </p>
             <h2 id="input-heading">Problem and upload</h2>
           </div>
+
+          {studyModeEnabled && (
+            <section className="study-panel" aria-label="Pilot study controls">
+              <div className="study-panel-heading">
+                <div>
+                  <p className="section-kicker">Researcher only</p>
+                  <h3>Pilot Study</h3>
+                </div>
+                <span className={studySessionRunning ? 'running' : ''}>
+                  {studySessionRunning
+                    ? 'Recording'
+                    : activeStudyLog
+                      ? 'Ended'
+                      : 'Not started'}
+                </span>
+              </div>
+              <div className="study-id-fields">
+                <label htmlFor="study-participant-id">
+                  Participant ID
+                  <input
+                    disabled={studySessionRunning}
+                    id="study-participant-id"
+                    onChange={(event) => updateStudyParticipant(event.target.value)}
+                    placeholder="P01"
+                    value={studyParticipantId}
+                  />
+                </label>
+                <label htmlFor="study-task-id">
+                  Task ID
+                  <input
+                    disabled={studySessionRunning}
+                    id="study-task-id"
+                    onChange={(event) => updateStudyTask(event.target.value)}
+                    placeholder={session.problemId ?? 'T01'}
+                    value={studyTaskId}
+                  />
+                </label>
+              </div>
+              <label className="researcher-note-field" htmlFor="researcher-note">
+                Researcher note
+                <input
+                  id="researcher-note"
+                  onChange={(event) => updateResearcherNote(event.target.value)}
+                  placeholder="Optional short note"
+                  value={researcherNote}
+                />
+              </label>
+              <div className="study-session-actions">
+                {!studySessionRunning && (
+                  <button onClick={startStudySession} type="button">
+                    {activeStudyLog ? 'Start new session' : 'Start session'}
+                  </button>
+                )}
+                {studySessionRunning && (
+                  <button onClick={finishStudySession} type="button">
+                    End session
+                  </button>
+                )}
+                {activeStudyLog && (
+                  <button
+                    className="study-export-button"
+                    onClick={exportStudyLog}
+                    type="button"
+                  >
+                    Export JSON
+                  </button>
+                )}
+              </div>
+              {activeStudyLog && (
+                <dl className="study-session-status">
+                  <div>
+                    <dt>Session</dt>
+                    <dd>
+                      {activeStudyLog.participantId ?? 'No participant'} /{' '}
+                      {activeStudyLog.taskId ?? 'No task'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Duration</dt>
+                    <dd>{formatDuration(getStudyDurationSeconds(activeStudyLog))}</dd>
+                  </div>
+                  <div>
+                    <dt>Events</dt>
+                    <dd>{activeStudyLog.events.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Export status</dt>
+                    <dd>{formatStudyExportStatus(studyExportStatus)}</dd>
+                  </div>
+                </dl>
+              )}
+              <p className="study-privacy-note">
+                Study logs record interaction events and task metadata. Images
+                are not included in exported logs.
+                {!studyTranscriptionEnabled && (
+                  <> Confirmed transcription text is not included.</>
+                )}
+              </p>
+            </section>
+          )}
 
           <div className="problem-picker">
             <label htmlFor="practice-problem">Choose a practice problem</label>
@@ -1363,18 +1568,6 @@ function App() {
               Pick another
             </button>
           </div>
-
-          {studyModeEnabled && (
-            <label className="study-task-field" htmlFor="study-task-id">
-              Study task ID
-              <input
-                id="study-task-id"
-                onChange={(event) => setStudyTaskId(event.target.value)}
-                placeholder={session.problemId ?? 'task-id'}
-                value={studyTaskId}
-              />
-            </label>
-          )}
 
           <div className="problem-statement-heading">
             <label className="field-label" htmlFor="problem-statement">
@@ -1690,7 +1883,6 @@ function App() {
               <button
                 type="button"
                 onClick={() => {
-                  studyLogRef.current.metrics.cancelActions += 1
                   recordStudyEvent('problem_change_cancelled')
                   setPendingProblemChange(null)
                 }}
@@ -1723,7 +1915,6 @@ function App() {
             <div>
               <button
                 onClick={() => {
-                  studyLogRef.current.metrics.cancelActions += 1
                   recordStudyEvent('worked_solution_cancelled')
                   setWorkedSolutionConfirmationOpen(false)
                 }}
@@ -1791,7 +1982,6 @@ function ConfirmationWorkspace({
   onReset: () => void
   onContinue: () => void
 }) {
-  const [reviewAllLines, setReviewAllLines] = useState(false)
   const [manualReviewIds, setManualReviewIds] = useState<Set<string>>(
     () => new Set(),
   )
@@ -1803,12 +1993,10 @@ function ConfirmationWorkspace({
     status: LineReviewStatus | undefined
   } | null>(null)
   const sortedLines = sortLinesByOrder(interpretation.lines)
-  const linesNeedingReview = sortedLines.filter(lineNeedsConfirmation)
-  const unresolvedLines = linesNeedingReview.filter(
-    (line) => !lineStatuses[line.id],
-  )
-  const automaticallyAccepted =
-    sortedLines.length - linesNeedingReview.length
+  const unresolvedLines = sortedLines.filter((line) => !lineStatuses[line.id])
+  const automaticallyAccepted = sortedLines.filter(
+    (line) => !lineNeedsConfirmation(line) && !manualReviewIds.has(line.id),
+  ).length
   const allReviewed =
     sortedLines.length > 0 &&
     unresolvedLines.length === 0 &&
@@ -1819,8 +2007,7 @@ function ConfirmationWorkspace({
   const activeLineExists = Boolean(activeLine)
   const activeLineHasEditor = Boolean(
     activeLine &&
-      (reviewAllLines ||
-        lineNeedsConfirmation(activeLine) ||
+      (lineNeedsConfirmation(activeLine) ||
         manualReviewIds.has(activeLine.id)),
   )
 
@@ -1922,28 +2109,6 @@ function ConfirmationWorkspace({
           </span>
         </div>
 
-        <div className="confirmation-toolbar">
-          <button
-            type="button"
-            onClick={() => {
-              setReviewAllLines(false)
-              onActiveLineChange(unresolvedLines[0]?.id ?? null)
-            }}
-          >
-            Review uncertain lines
-          </button>
-          <button type="button" onClick={() => setReviewAllLines(true)}>
-            Edit any line
-          </button>
-          <button
-            className={reviewAllLines ? 'active' : ''}
-            type="button"
-            onClick={() => setReviewAllLines((value) => !value)}
-          >
-            {reviewAllLines ? 'Review all: on' : 'Review all lines'}
-          </button>
-        </div>
-
         <div className="confirmation-lines">
           {sortedLines.map((line, index) => {
             const showConfidence =
@@ -1955,9 +2120,9 @@ function ConfirmationWorkspace({
               line.workStatus === 'unclear' ||
               line.workStatusConfidence < 0.8
             const showControls =
-              reviewAllLines ||
               requiresReview ||
               manualReviewIds.has(line.id)
+            const isReviewLine = requiresReview || manualReviewIds.has(line.id)
             const previousLine = sortedLines[index - 1]
             const nextLine = sortedLines[index + 1]
 
@@ -1965,9 +2130,13 @@ function ConfirmationWorkspace({
               <article
                 className={`confirmation-line ${
                   activeLineId === line.id ? 'active' : ''
-                } ${requiresReview ? 'requires-review' : 'auto-accepted'} work-status-${
-                  line.workStatus
-                }`}
+                } ${
+                  isReviewLine && !status
+                    ? 'requires-review'
+                    : isReviewLine
+                      ? 'review-confirmed'
+                      : 'auto-accepted'
+                } work-status-${line.workStatus}`}
                 key={line.id}
                 onClick={() => selectLineForEditing(line.id)}
                 ref={(element) => {
@@ -1995,10 +2164,13 @@ function ConfirmationWorkspace({
                   {!line.region && (
                     <span className="unlocated-chip">Location uncertain</span>
                   )}
-                  {!requiresReview && (
+                  {!isReviewLine && (
                     <span className="auto-accepted-chip">
                       Accepted automatically
                     </span>
+                  )}
+                  {isReviewLine && status && (
+                    <span className="line-confirmed-chip">Confirmed</span>
                   )}
                 </div>
 
@@ -2027,16 +2199,6 @@ function ConfirmationWorkspace({
                 ) : (
                   <div className="accepted-line-text">
                     <p>{line.confirmedText}</p>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setManualReviewIds((current) =>
-                          new Set(current).add(line.id),
-                        )
-                      }
-                    >
-                      Edit
-                    </button>
                   </div>
                 )}
 
@@ -2076,12 +2238,6 @@ function ConfirmationWorkspace({
                       >
                         Partially crossed out
                       </button>
-                      <button
-                        onClick={() => selectLineForEditing(line.id)}
-                        type="button"
-                      >
-                        Edit text
-                      </button>
                     </div>
                     {line.crossedOutEvidence && (
                       <p>{line.crossedOutEvidence}</p>
@@ -2094,22 +2250,20 @@ function ConfirmationWorkspace({
                     className="line-review-control"
                     aria-label={`Review status for line ${index + 1}`}
                   >
-                    {(
-                      [
-                        ['correct', 'Confirm'],
-                        ['needs_correction', 'Edit and confirm'],
-                        ['not_sure', 'Not sure'],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        className={status === value ? 'active' : ''}
-                        key={value}
-                        type="button"
-                        onClick={() => onStatusChange(line.id, value)}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                    <button
+                      className={status ? 'active' : ''}
+                      type="button"
+                      onClick={() =>
+                        onStatusChange(
+                          line.id,
+                          line.confirmedText.trim() === line.rawText.trim()
+                            ? 'correct'
+                            : 'needs_correction',
+                        )
+                      }
+                    >
+                      {status ? 'Confirmed' : 'Confirm'}
+                    </button>
                   </div>
                 )}
 
@@ -2176,7 +2330,6 @@ function ConfirmationWorkspace({
             type="button"
             onClick={() => {
               onReset()
-              setReviewAllLines(false)
               setManualReviewIds(new Set())
             }}
           >
@@ -2877,8 +3030,31 @@ function createConfirmedTranscriptionSnapshot(lines: ConfirmedLine[]): string {
   )
 }
 
+function getStudyRevisionResult(
+  comparison: RevisionComparison,
+  meaningfulRevision: boolean,
+): 'same_issue' | 'new_issue' | 'resolved' | 'unchanged' | 'unclear' {
+  if (!meaningfulRevision) return 'unchanged'
+  if (comparison.originalIssueResolved === 'unclear') return 'unclear'
+  if (comparison.originalIssueResolved === 'no') return 'same_issue'
+  if (comparison.originalIssueResolved === 'partially') return 'same_issue'
+  return comparison.newIssue ? 'new_issue' : 'resolved'
+}
+
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`
+}
+
+function formatDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatStudyExportStatus(status: StudyExportStatus): string {
+  if (status === 'exported') return 'Exported'
+  if (status === 'modified_since_export') return 'Modified since export'
+  return 'Not exported'
 }
 
 function getFeedbackSummary(feedback: FeedbackResult): string {

@@ -59,7 +59,39 @@ PDF.js renders the selected PDF page to a bounded, high-resolution JPEG in the
 browser before the normal image-analysis workflow begins. Single-page PDFs use
 page 1 automatically; multi-page PDFs show a compact page selector and analyze
 only one page at a time. There is no direct Samsung Notes integration. Study
-mode adds a task-ID field and metadata-only session-log export.
+mode adds an explicit, local pilot-session logger.
+
+## Pilot Study Mode
+
+Study mode is off by default. Enable it at build time:
+
+```text
+VITE_STUDY_MODE=true
+VITE_STUDY_INCLUDE_TRANSCRIPTION=false
+```
+
+Restart the development server after changing these values. On Render, set
+`VITE_STUDY_MODE=true` and redeploy because Vite flags are compiled into the
+frontend.
+
+The researcher-only `Pilot Study` panel accepts a participant ID such as
+`P01`, a task ID such as `T01`, and an optional short note. Click `Start
+session`, run one task, optionally click `End session`, and click `Export JSON`.
+Export also works while a session is running and calculates duration through
+the export time. A typical filename is
+`physics-feedback_P01_T01_20260804T153000Z.json`.
+
+The JSON contains session timing, source type, transcription-review counts,
+diagnosis summary, annotation kinds, revision outcomes, assistance level,
+worked-solution state, safe error counts, and a chronological event list. It
+does not contain uploaded images, PDF bytes, base64, Blob URLs, API keys,
+filesystem paths, full request payloads, or raw model responses. Confirmed
+transcription text is excluded when
+`VITE_STUDY_INCLUDE_TRANSCRIPTION=false`, which is the recommended default.
+
+Logs remain in browser memory and are downloaded only when the researcher
+clicks `Export JSON`. Export each session before starting another; the app
+warns before replacing unexported or modified session data.
 
 See `PROJECT_NOTES.md` for the workflow, schema, privacy notes, and current
 limitations.

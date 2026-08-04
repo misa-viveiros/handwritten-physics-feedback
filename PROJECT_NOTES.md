@@ -304,21 +304,47 @@ integration; students export a note as an image or PDF first.
 
 ## Pilot Study Logging
 
-Set `VITE_STUDY_MODE=true` to show a task-ID field and the developer-only
-`Export session log` action. Logging remains in memory and downloads one JSON
-file containing the session ID, problem/task ID, timestamps and durations,
-interpretation uncertainty, distinct transcription edits, crossed-out-status
-corrections, feedback level, revisions, issue resolution, worked-solution
-state, vector proposal/render/fallback counts, API failures, and reset/cancel
-actions.
+Set `VITE_STUDY_MODE=true` and restart or redeploy to show the researcher-only
+`Pilot Study` panel. Production defaults remain `VITE_STUDY_MODE=false` and
+`VITE_STUDY_INCLUDE_TRANSCRIPTION=false` in `.env.example` and `render.yaml`.
+
+The researcher enters a participant ID and task ID, optionally adds one short
+note, and explicitly starts a session. Start creates a fresh schema `1.0` log,
+automatic session ID, UTC start time, and `session_started` event. End records
+`session_ended`, end time, and duration. Export is available before or after
+End and computes duration through export time when necessary.
+
+The panel displays live duration, event count, and `Not exported`, `Exported`,
+or `Modified since export`. Starting another session warns when the current
+data has not been exported since its latest change. Normal problem and attempt
+resets add `reset_clicked`; they do not erase the study session.
+
+The exported JSON combines aggregate fields with chronological events for
+source selection, interpretation and diagnosis analysis, transcription review
+and distinct line edits, diagnosis display, rendered annotation summaries,
+revision submissions/results, assistance-level changes, worked-solution
+unlock/view, resets, and safe API/client error categories. Revision outcomes
+come from the existing revision comparison, assistance levels come from the
+existing assistance state, and annotation counts come from structured markup
+objects rather than visible DOM text.
 
 Upload instrumentation may include `sourceType`, `pdfPageNumber`, and
 `pdfPageCount`. It excludes original filenames, local paths, image bytes, PDF
 bytes, and device metadata.
 
-The log never includes image bytes, image contents, or API keys. Confirmed
+The log never includes image or PDF contents, base64, Blob URLs, filenames,
+filesystem paths, API keys, full HTTP payloads, raw model responses, IP
+addresses, cookies, or fingerprinting data. API errors include only endpoint
+name and HTTP status; client errors use a short category. Confirmed
 transcription is excluded by default and is included only when both study mode
 and `VITE_STUDY_INCLUDE_TRANSCRIPTION=true` are explicitly configured.
+
+Logging is in memory only. There is no database, analytics provider, tracking
+pixel, cookie, server upload, or localStorage persistence. A successful export
+downloads pretty-printed JSON with a sanitized filename such as
+`physics-feedback_P01_T01_20260804T153000Z.json`; blank IDs use the short
+session-ID form. Researchers must export before refreshing the page or starting
+a fresh session.
 
 ## Demo Path
 
