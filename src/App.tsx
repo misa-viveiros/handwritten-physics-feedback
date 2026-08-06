@@ -2586,47 +2586,51 @@ function FeedbackPanel({
         </div>
       </section>
 
-      <section className="feedback-section issue-section primary-card">
-        <h3>First thing to revise</h3>
-        {feedback.firstIssue ? (
-          <>
-            <div className="issue-meta">
-              <span>{issueTypeLabels[feedback.firstIssue.errorType]}</span>
-              <span>{feedback.firstIssue.locationDescription}</span>
-            </div>
-            <blockquote>{feedback.firstIssue.quotedWork}</blockquote>
-            <h4>Why this matters</h4>
-            <p>{feedback.firstIssue.explanation}</p>
-            {feedback.firstIssue.likelyMisconception && (
-              <div className="misconception-box">
-                <h4>Likely misconception</h4>
-                <p>{feedback.firstIssue.likelyMisconception}</p>
-              </div>
+      <div className="feedback-main-layout">
+        <AnnotatedImageView
+          activeLineId={activeLineId}
+          annotations={feedback.suggestedMarkup}
+          avoidRegions={interpretation.lines.flatMap((line) =>
+            line.region ? [line.region] : [],
+          )}
+          imageUrl={imagePreviewUrl}
+          key={feedback.suggestedMarkup.map((markup) => markup.id).join('|')}
+          lines={sortedConfirmedLines}
+          onLineSelect={onSelectedLineChange}
+          primaryLineId={feedback.firstIssue?.lineId}
+        />
+
+        <aside className="feedback-sidebar" aria-label="Revision guidance">
+          <section className="feedback-section issue-section primary-card">
+            <h3>First thing to revise</h3>
+            {feedback.firstIssue ? (
+              <>
+                <div className="issue-meta">
+                  <span>{issueTypeLabels[feedback.firstIssue.errorType]}</span>
+                  <span>{feedback.firstIssue.locationDescription}</span>
+                </div>
+                <blockquote>{feedback.firstIssue.quotedWork}</blockquote>
+                <h4>Why this matters</h4>
+                <p>{feedback.firstIssue.explanation}</p>
+                {feedback.firstIssue.likelyMisconception && (
+                  <div className="misconception-box">
+                    <h4>Likely misconception</h4>
+                    <p>{feedback.firstIssue.likelyMisconception}</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p>No first issue stands out in this review.</p>
             )}
-          </>
-        ) : (
-          <p>No first issue stands out in this review.</p>
-        )}
-      </section>
+          </section>
 
-      <section className="feedback-section hint-card">
-        <h3>Hint</h3>
-        <h4>Try this</h4>
-        <p>{mergedHint}</p>
-      </section>
-
-      <AnnotatedImageView
-        activeLineId={activeLineId}
-        annotations={feedback.suggestedMarkup}
-        avoidRegions={interpretation.lines.flatMap((line) =>
-          line.region ? [line.region] : [],
-        )}
-        imageUrl={imagePreviewUrl}
-        key={feedback.suggestedMarkup.map((markup) => markup.id).join('|')}
-        lines={sortedConfirmedLines}
-        onLineSelect={onSelectedLineChange}
-        primaryLineId={feedback.firstIssue?.lineId}
-      />
+          <section className="feedback-section hint-card">
+            <h3>Hint</h3>
+            <h4>Try this</h4>
+            <p>{mergedHint}</p>
+          </section>
+        </aside>
+      </div>
 
       <details className="feedback-section compact-card strengths-card">
         <summary>What you did well</summary>

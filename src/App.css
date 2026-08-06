@@ -1552,15 +1552,30 @@ textarea:disabled {
 
 .feedback-sections {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "revision revision"
-    "issue hint"
-    "summary summary"
-    "image image"
-    "strengths strengths"
-    "solution solution";
+    "revision"
+    "summary"
+    "main"
+    "strengths"
+    "solution";
   gap: 10px;
+}
+
+.feedback-main-layout {
+  grid-area: main;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(240px, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.feedback-sidebar {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
 }
 
 .revision-progress {
@@ -1719,6 +1734,7 @@ textarea:disabled {
 
 .annotated-work-card {
   grid-area: image;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
@@ -1748,6 +1764,8 @@ textarea:disabled {
 
 .annotation-controls {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   justify-content: flex-end;
 }
 
@@ -1764,6 +1782,43 @@ textarea:disabled {
   cursor: pointer;
 }
 
+.zoom-controls {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+  background: #f7f9f8;
+}
+
+.zoom-controls button {
+  width: 30px;
+  min-height: 26px;
+  border: 0;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.zoom-controls button:last-child {
+  width: auto;
+  padding: 0 7px;
+}
+
+.zoom-controls button:disabled {
+  color: #98a1a8;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.zoom-controls output {
+  width: 47px;
+  color: #52606c;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .localization-notice {
   margin: 0 0 8px;
   border-radius: 8px;
@@ -1775,8 +1830,8 @@ textarea:disabled {
 
 .annotated-image-scroll {
   width: 100%;
-  height: min(56svh, 520px);
-  overflow-x: hidden;
+  height: min(64svh, 620px);
+  overflow-x: auto;
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border);
@@ -1787,6 +1842,7 @@ textarea:disabled {
 
 .annotated-image-stage {
   min-height: 0;
+  margin-inline: auto;
   overflow: hidden;
   background: #eef1f0;
 }
@@ -2415,7 +2471,6 @@ textarea:disabled {
   }
 
   .workspace,
-  .feedback-sections,
   .detail-row,
   .confirmation-workspace {
     grid-template-columns: 1fr;
@@ -2426,14 +2481,11 @@ textarea:disabled {
   }
 
   .feedback-sections {
-    grid-template-areas:
-      "revision"
-      "issue"
-      "hint"
-      "summary"
-      "image"
-      "strengths"
-      "solution";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .feedback-main-layout {
+    grid-template-columns: minmax(0, 3fr) minmax(230px, 1fr);
   }
 
   .summary-bar {
@@ -2497,5 +2549,15 @@ textarea:disabled {
 
   .confirmation-actions {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .feedback-main-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-controls {
+    justify-content: flex-start;
   }
 }

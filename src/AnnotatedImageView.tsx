@@ -53,7 +53,9 @@ export function AnnotatedImageView({
   onLineSelect,
 }: AnnotatedImageViewProps) {
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const [showFeedback, setShowFeedback] = useState(true)
+  const [zoomPercent, setZoomPercent] = useState(100)
   const [stageSize, setStageSize] = useState<ViewportSize>({
     width: 900,
     height: 700,
@@ -127,6 +129,39 @@ export function AnnotatedImageView({
     return () => observer.disconnect()
   }, [])
 
+  function updateZoom(nextZoom: number) {
+    const next = clamp(Math.round(nextZoom), 50, 250)
+    const scroll = scrollRef.current
+    const centerX = scroll
+      ? (scroll.scrollLeft + scroll.clientWidth / 2) /
+        Math.max(1, scroll.scrollWidth)
+      : 0.5
+    const centerY = scroll
+      ? (scroll.scrollTop + scroll.clientHeight / 2) /
+        Math.max(1, scroll.scrollHeight)
+      : 0.5
+
+    setZoomPercent(next)
+    requestAnimationFrame(() => {
+      const updatedScroll = scrollRef.current
+      if (!updatedScroll) return
+      updatedScroll.scrollLeft =
+        centerX * updatedScroll.scrollWidth - updatedScroll.clientWidth / 2
+      updatedScroll.scrollTop =
+        centerY * updatedScroll.scrollHeight - updatedScroll.clientHeight / 2
+    })
+  }
+
+  function fitPage() {
+    setZoomPercent(100)
+    requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollLeft = 0
+        scrollRef.current.scrollTop = 0
+      }
+    })
+  }
+
   return (
     <section className="annotated-work-card" aria-labelledby="annotated-work-heading">
       <div className="annotated-work-header">
@@ -135,6 +170,30 @@ export function AnnotatedImageView({
           <p>Brief notes sit beside the unchanged image.</p>
         </div>
         <div className="annotation-controls" aria-label="Annotation controls">
+          <div className="zoom-controls" aria-label="Annotated work zoom controls">
+            <button
+              aria-label="Zoom out"
+              disabled={zoomPercent <= 50}
+              onClick={() => updateZoom(zoomPercent - 25)}
+              title="Zoom out"
+              type="button"
+            >
+              &minus;
+            </button>
+            <output aria-live="polite">{zoomPercent}%</output>
+            <button
+              aria-label="Zoom in"
+              disabled={zoomPercent >= 250}
+              onClick={() => updateZoom(zoomPercent + 25)}
+              title="Zoom in"
+              type="button"
+            >
+              +
+            </button>
+            <button onClick={fitPage} title="Fit page" type="button">
+              Fit
+            </button>
+          </div>
           <button type="button" onClick={() => setShowFeedback((value) => !value)}>
             {showFeedback ? 'Hide feedback' : 'Show feedback'}
           </button>
@@ -147,8 +206,12 @@ export function AnnotatedImageView({
         </p>
       )}
 
-      <div className="annotated-image-scroll">
-        <div className="annotated-image-stage" ref={stageRef}>
+      <div className="annotated-image-scroll" ref={scrollRef}>
+        <div
+          className="annotated-image-stage"
+          ref={stageRef}
+          style={{ width: `${zoomPercent}%` }}
+        >
           <div className="line-number-gutter annotated-line-gutter">
             {gutterItems.map((item) => (
               <button
@@ -211,6 +274,11 @@ export function AnnotatedImageView({
                           top: `${noteBox.y * 100}%`,
                           width: `${noteBox.width * 100}%`,
                           height: `${noteBox.height * 100}%`,
+                          fontSize: `${clamp(
+                            11 * (zoomPercent / 100),
+                            11,
+                            22,
+                          )}px`,
                         }}
                       >
                         {annotation.noteText}
