@@ -1578,6 +1578,12 @@ textarea:disabled {
   min-width: 0;
 }
 
+.feedback-main-layout > .annotated-work-card,
+.feedback-sidebar > .primary-card,
+.feedback-sidebar > .hint-card {
+  grid-area: auto;
+}
+
 .revision-progress {
   grid-area: revision;
   border: 1px solid #9dcfc6;
@@ -2486,7 +2492,7 @@ textarea:disabled {
   }
 
   .feedback-main-layout {
-    grid-template-columns: minmax(0, 3fr) minmax(230px, 1fr);
+    grid-template-columns: minmax(0, 3fr) minmax(220px, 1fr);
   }
 
   .summary-bar {
@@ -2553,7 +2559,7 @@ textarea:disabled {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 560px) {
   .feedback-main-layout {
     grid-template-columns: 1fr;
   }
