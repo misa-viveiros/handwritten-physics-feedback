@@ -1838,6 +1838,7 @@ textarea:disabled {
   border-radius: 8px;
   background: #f2f4f3;
   scrollbar-gutter: stable;
+  touch-action: pan-x pan-y;
 }
 
 .annotated-image-stage {

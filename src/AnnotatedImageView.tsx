@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PhysicsVectorMarkup, SuggestedMarkup } from './feedback'
 import type { InterpretedLine } from './interpretation'
 import { createLineGutterItems } from './lineReferences'
@@ -54,6 +54,11 @@ export function AnnotatedImageView({
 }: AnnotatedImageViewProps) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const zoomPercentRef = useRef(100)
+  const pinchGestureRef = useRef<{
+    distance: number
+    zoomPercent: number
+  } | null>(null)
   const [showFeedback, setShowFeedback] = useState(true)
   const [zoomPercent, setZoomPercent] = useState(100)
   const [stageSize, setStageSize] = useState<ViewportSize>({
@@ -129,7 +134,7 @@ export function AnnotatedImageView({
     return () => observer.disconnect()
   }, [])
 
-  function updateZoom(nextZoom: number) {
+  const updateZoom = useCallback((nextZoom: number) => {
     const next = clamp(Math.round(nextZoom), 50, 250)
     const scroll = scrollRef.current
     const centerX = scroll
@@ -142,6 +147,7 @@ export function AnnotatedImageView({
       : 0.5
 
     setZoomPercent(next)
+    zoomPercentRef.current = next
     requestAnimationFrame(() => {
       const updatedScroll = scrollRef.current
       if (!updatedScroll) return
@@ -150,17 +156,69 @@ export function AnnotatedImageView({
       updatedScroll.scrollTop =
         centerY * updatedScroll.scrollHeight - updatedScroll.clientHeight / 2
     })
-  }
+  }, [])
 
-  function fitPage() {
+  const fitPage = useCallback(() => {
     setZoomPercent(100)
+    zoomPercentRef.current = 100
     requestAnimationFrame(() => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollLeft = 0
-        scrollRef.current.scrollTop = 0
-      }
+      if (!scrollRef.current) return
+      scrollRef.current.scrollLeft = 0
+      scrollRef.current.scrollTop = 0
     })
-  }
+  }, [])
+
+  useEffect(() => {
+    const scroll = scrollRef.current
+    if (!scroll) return
+
+    function handleWheel(event: WheelEvent) {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      updateZoom(zoomPercentRef.current - event.deltaY * 0.08)
+    }
+
+    function handleTouchStart(event: TouchEvent) {
+      if (event.touches.length !== 2) {
+        pinchGestureRef.current = null
+        return
+      }
+      pinchGestureRef.current = {
+        distance: getTouchDistance(event.touches),
+        zoomPercent: zoomPercentRef.current,
+      }
+    }
+
+    function handleTouchMove(event: TouchEvent) {
+      const gesture = pinchGestureRef.current
+      if (!gesture || event.touches.length !== 2) return
+      event.preventDefault()
+      updateZoom(
+        gesture.zoomPercent *
+          (getTouchDistance(event.touches) / Math.max(1, gesture.distance)),
+      )
+    }
+
+    function handleTouchEnd(event: TouchEvent) {
+      if (event.touches.length < 2) {
+        pinchGestureRef.current = null
+      }
+    }
+
+    scroll.addEventListener('wheel', handleWheel, { passive: false })
+    scroll.addEventListener('touchstart', handleTouchStart, { passive: true })
+    scroll.addEventListener('touchmove', handleTouchMove, { passive: false })
+    scroll.addEventListener('touchend', handleTouchEnd)
+    scroll.addEventListener('touchcancel', handleTouchEnd)
+
+    return () => {
+      scroll.removeEventListener('wheel', handleWheel)
+      scroll.removeEventListener('touchstart', handleTouchStart)
+      scroll.removeEventListener('touchmove', handleTouchMove)
+      scroll.removeEventListener('touchend', handleTouchEnd)
+      scroll.removeEventListener('touchcancel', handleTouchEnd)
+    }
+  }, [updateZoom])
 
   return (
     <section className="annotated-work-card" aria-labelledby="annotated-work-heading">
@@ -291,6 +349,16 @@ export function AnnotatedImageView({
         </div>
       </div>
     </section>
+  )
+}
+
+function getTouchDistance(touches: TouchList): number {
+  const first = touches[0]
+  const second = touches[1]
+  if (!first || !second) return 0
+  return Math.hypot(
+    second.clientX - first.clientX,
+    second.clientY - first.clientY,
   )
 }
 
