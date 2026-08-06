@@ -415,6 +415,9 @@ limit is 20 MB. Only one PDF page is rendered and analyzed at a time.
 
 ## Future Work
 
+- Optional upload, photo, or screenshot of the problem statement
+- Generation of similar practice problems from a supplied problem
+- Physics animation or simulation feedback
 - Direct tablet or stylus writing
 - Animation of the physics implied by student work
 - Integration with the existing PBD simulator

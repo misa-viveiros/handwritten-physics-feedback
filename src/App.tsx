@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import type {
+  ChangeEvent,
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+} from 'react'
 import './App.css'
 import { AnnotatedImageView } from './AnnotatedImageView'
 import { InterpretationImageView } from './InterpretationImageView'
@@ -19,6 +23,7 @@ import type {
 } from './interpretation'
 import {
   createInitialLineStatuses,
+  getVerificationSummary,
   lineNeedsConfirmation,
 } from './interpretation'
 import { validateInterpretedSolution } from './interpretationValidation'
@@ -29,11 +34,7 @@ import {
   reanchorFeedbackToInterpretation,
   sortInterpretationLines,
 } from './interpretationEditing'
-import {
-  createLineNumberMap,
-  resolveLineReference,
-  sortLinesByOrder,
-} from './lineReferences'
+import { sortLinesByOrder } from './lineReferences'
 import {
   compareRevisions,
   type RevisionComparison,
@@ -169,6 +170,8 @@ function App() {
   const [apiKey, setApiKey] = useState(readSessionApiKey)
   const [apiKeyDraft, setApiKeyDraft] = useState(apiKey)
   const [apiKeyMenuOpen, setApiKeyMenuOpen] = useState(false)
+  const [inputPanelCollapsed, setInputPanelCollapsed] = useState(false)
+  const [inputPanelWidth, setInputPanelWidth] = useState(300)
   const [session, setSession] = useState<ProblemSession>(() =>
     createProblemSession(problemBank[0]),
   )
@@ -187,6 +190,28 @@ function App() {
   >(null)
   const [workedSolutionConfirmationOpen, setWorkedSolutionConfirmationOpen] =
     useState(false)
+
+  function startInputPanelResize(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = inputPanelWidth
+
+    function resize(moveEvent: PointerEvent) {
+      setInputPanelWidth(
+        Math.min(420, Math.max(260, startWidth + moveEvent.clientX - startX)),
+      )
+    }
+
+    function stopResize() {
+      window.removeEventListener('pointermove', resize)
+      window.removeEventListener('pointerup', stopResize)
+    }
+
+    window.addEventListener('pointermove', resize)
+    window.addEventListener('pointerup', stopResize)
+  }
 
   const activeAttempt =
     session.attempts.find(
@@ -1432,14 +1457,36 @@ function App() {
         </div>
       </header>
 
-      <section className="workspace" aria-label="Physics feedback workspace">
-        <section className="input-panel" aria-labelledby="input-heading">
-          <div className="panel-heading">
-            <p className="section-kicker">
-              Attempt {attemptNumber} | Student work
-            </p>
-            <h2 id="input-heading">Problem and upload</h2>
-          </div>
+      <section
+        className={`workspace ${inputPanelCollapsed ? 'input-collapsed' : ''}`}
+        aria-label="Physics feedback workspace"
+        style={
+          { '--input-panel-width': `${inputPanelWidth}px` } as CSSProperties
+        }
+      >
+        <div
+          className={`input-panel-shell ${
+            inputPanelCollapsed ? 'collapsed' : ''
+          }`}
+        >
+          <section className="input-panel" aria-labelledby="input-heading">
+            <div className="panel-heading input-panel-heading">
+              <div>
+                <p className="section-kicker">
+                  Attempt {attemptNumber} | Student work
+                </p>
+                <h2 id="input-heading">Problem and upload</h2>
+              </div>
+              <button
+                aria-label="Collapse problem and upload panel"
+                className="input-panel-collapse"
+                onClick={() => setInputPanelCollapsed(true)}
+                title="Collapse problem panel"
+                type="button"
+              >
+                &lsaquo;
+              </button>
+            </div>
 
           {studyModeEnabled && (
             <section className="study-panel" aria-label="Pilot study controls">
@@ -1744,6 +1791,7 @@ function App() {
                     : 'Analysis status'}
           </div>
 
+          <h3 className="preview-label">File preview</h3>
           <div className="preview-area">
             <div className="preview-frame">
               {imagePreviewUrl ? (
@@ -1762,7 +1810,40 @@ function App() {
               )}
             </div>
           </div>
-        </section>
+          </section>
+
+          {inputPanelCollapsed ? (
+            <button
+              aria-label="Expand problem and upload panel"
+              className="input-panel-expand"
+              onClick={() => setInputPanelCollapsed(false)}
+              title="Expand problem panel"
+              type="button"
+            >
+              &rsaquo;
+            </button>
+          ) : (
+            <div
+              aria-label="Resize problem and upload panel"
+              aria-orientation="vertical"
+              aria-valuemax={420}
+              aria-valuemin={260}
+              aria-valuenow={inputPanelWidth}
+              className="input-panel-resizer"
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft') {
+                  setInputPanelWidth((width) => Math.max(260, width - 10))
+                }
+                if (event.key === 'ArrowRight') {
+                  setInputPanelWidth((width) => Math.min(420, width + 10))
+                }
+              }}
+              onPointerDown={startInputPanelResize}
+              role="separator"
+              tabIndex={0}
+            />
+          )}
+        </div>
 
         <section className="feedback-panel" aria-labelledby="feedback-heading">
           <div className="panel-heading">
@@ -1993,13 +2074,10 @@ function ConfirmationWorkspace({
     status: LineReviewStatus | undefined
   } | null>(null)
   const sortedLines = sortLinesByOrder(interpretation.lines)
-  const unresolvedLines = sortedLines.filter((line) => !lineStatuses[line.id])
-  const automaticallyAccepted = sortedLines.filter(
-    (line) => !lineNeedsConfirmation(line) && !manualReviewIds.has(line.id),
-  ).length
+  const verificationSummary = getVerificationSummary(sortedLines, lineStatuses)
   const allReviewed =
     sortedLines.length > 0 &&
-    unresolvedLines.length === 0 &&
+    verificationSummary.needsReview === 0 &&
     sortedLines.every((line) => line.confirmedText.trim().length > 0)
   const activeLine = activeLineId
     ? sortedLines.find((line) => line.id === activeLineId)
@@ -2007,8 +2085,7 @@ function ConfirmationWorkspace({
   const activeLineExists = Boolean(activeLine)
   const activeLineHasEditor = Boolean(
     activeLine &&
-      (lineNeedsConfirmation(activeLine) ||
-        manualReviewIds.has(activeLine.id)),
+      (!lineStatuses[activeLine.id] || manualReviewIds.has(activeLine.id)),
   )
 
   function selectLineForEditing(lineId: string) {
@@ -2021,6 +2098,22 @@ function ConfirmationWorkspace({
       return next
     })
     onActiveLineChange(lineId)
+  }
+
+  function confirmLine(line: InterpretedLine) {
+    onStatusChange(
+      line.id,
+      line.confirmedText.trim() === line.rawText.trim()
+        ? 'correct'
+        : 'needs_correction',
+    )
+    setManualReviewIds((current) => {
+      if (!current.has(line.id)) return current
+      const next = new Set(current)
+      next.delete(line.id)
+      return next
+    })
+    onActiveLineChange(null)
   }
 
   useEffect(() => {
@@ -2099,13 +2192,16 @@ function ConfirmationWorkspace({
 
         <div className="confirmation-summary">
           <span>
-            <strong>{sortedLines.length}</strong> lines interpreted
+            <strong>{verificationSummary.total}</strong> lines interpreted
           </span>
-          <span className={unresolvedLines.length > 0 ? 'needs-review' : ''}>
-            <strong>{unresolvedLines.length}</strong> need your review
+          <span
+            className={verificationSummary.needsReview > 0 ? 'needs-review' : ''}
+          >
+            <strong>{verificationSummary.needsReview}</strong> need your review
           </span>
           <span>
-            <strong>{automaticallyAccepted}</strong> accepted automatically
+            <strong>{verificationSummary.acceptedAutomatically}</strong>{' '}
+            accepted automatically
           </span>
         </div>
 
@@ -2119,10 +2215,10 @@ function ConfirmationWorkspace({
             const requiresCrossOutReview =
               line.workStatus === 'unclear' ||
               line.workStatusConfidence < 0.8
-            const showControls =
-              requiresReview ||
-              manualReviewIds.has(line.id)
-            const isReviewLine = requiresReview || manualReviewIds.has(line.id)
+            const isManuallyOpen = manualReviewIds.has(line.id)
+            const showControls = !status || isManuallyOpen
+            const isReviewLine =
+              requiresReview || status === 'needs_correction' || isManuallyOpen
             const previousLine = sortedLines[index - 1]
             const nextLine = sortedLines[index + 1]
 
@@ -2164,7 +2260,7 @@ function ConfirmationWorkspace({
                   {!line.region && (
                     <span className="unlocated-chip">Location uncertain</span>
                   )}
-                  {!isReviewLine && (
+                  {!isReviewLine && status === 'correct' && (
                     <span className="auto-accepted-chip">
                       Accepted automatically
                     </span>
@@ -2209,7 +2305,7 @@ function ConfirmationWorkspace({
                     </p>
                   )}
 
-                {requiresCrossOutReview && (
+                {requiresCrossOutReview && showControls && (
                   <fieldset className="crossed-out-review">
                     <legend>Did you cross this out?</legend>
                     <div>
@@ -2253,16 +2349,12 @@ function ConfirmationWorkspace({
                     <button
                       className={status ? 'active' : ''}
                       type="button"
-                      onClick={() =>
-                        onStatusChange(
-                          line.id,
-                          line.confirmedText.trim() === line.rawText.trim()
-                            ? 'correct'
-                            : 'needs_correction',
-                        )
-                      }
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        confirmLine(line)
+                      }}
                     >
-                      {status ? 'Confirmed' : 'Confirm'}
+                      Confirm
                     </button>
                   </div>
                 )}
@@ -2439,20 +2531,9 @@ function FeedbackPanel({
   onReviewInterpretation: () => void
   onSelectedLineChange: (lineId: string | null) => void
 }) {
-  const secondaryIssues = feedback.secondaryIssues ?? []
-  const uncertainLines = feedback.transcription.lines.filter(
-    (line) =>
-      line.confidence < 0.75 ||
-      (line.uncertainSymbols && line.uncertainSymbols.length > 0),
-  )
   const summary = getFeedbackSummary(feedback)
   const sortedConfirmedLines = sortLinesByOrder(confirmedLines)
-  const lineNumbers = createLineNumberMap(sortedConfirmedLines)
-  const visibleLineIds = new Set(
-    sortedConfirmedLines
-      .filter((line) => line.region)
-      .map((line) => line.id),
-  )
+  const mergedHint = getMergedHint(feedback)
 
   return (
     <div className="feedback-sections">
@@ -2480,7 +2561,7 @@ function FeedbackPanel({
             onClick={onReviewInterpretation}
             disabled={isAnalyzing}
           >
-            Review transcription
+            Review interpretation
           </button>
           <button
             className="revise-button"
@@ -2505,32 +2586,12 @@ function FeedbackPanel({
         </div>
       </section>
 
-      <AnnotatedImageView
-        activeLineId={activeLineId}
-        annotations={feedback.suggestedMarkup}
-        avoidRegions={interpretation.lines.flatMap((line) =>
-          line.region ? [line.region] : [],
-        )}
-        imageUrl={imagePreviewUrl}
-        key={feedback.suggestedMarkup.map((markup) => markup.id).join('|')}
-        lines={sortedConfirmedLines}
-        onLineSelect={onSelectedLineChange}
-        primaryLineId={feedback.firstIssue?.lineId}
-      />
-
       <section className="feedback-section issue-section primary-card">
         <h3>First thing to revise</h3>
         {feedback.firstIssue ? (
           <>
             <div className="issue-meta">
               <span>{issueTypeLabels[feedback.firstIssue.errorType]}</span>
-              <span>
-                {resolveLineReference(
-                  feedback.firstIssue,
-                  lineNumbers,
-                  visibleLineIds,
-                )}
-              </span>
               <span>{feedback.firstIssue.locationDescription}</span>
             </div>
             <blockquote>{feedback.firstIssue.quotedWork}</blockquote>
@@ -2551,139 +2612,30 @@ function FeedbackPanel({
       <section className="feedback-section hint-card">
         <h3>Hint</h3>
         <h4>Try this</h4>
-        <p>
-          {feedback.firstIssue
-            ? feedback.firstIssue.hint
-            : feedback.nextStepHint}
-        </p>
+        <p>{mergedHint}</p>
       </section>
 
-      <section className="feedback-section compact-card strengths-card">
-        <h3>What you did well</h3>
+      <AnnotatedImageView
+        activeLineId={activeLineId}
+        annotations={feedback.suggestedMarkup}
+        avoidRegions={interpretation.lines.flatMap((line) =>
+          line.region ? [line.region] : [],
+        )}
+        imageUrl={imagePreviewUrl}
+        key={feedback.suggestedMarkup.map((markup) => markup.id).join('|')}
+        lines={sortedConfirmedLines}
+        onLineSelect={onSelectedLineChange}
+        primaryLineId={feedback.firstIssue?.lineId}
+      />
+
+      <details className="feedback-section compact-card strengths-card">
+        <summary>What you did well</summary>
         <ul className="strength-list">
           {feedback.strengths.slice(0, 3).map((strength) => (
             <li key={strength}>{strength}</li>
           ))}
         </ul>
-      </section>
-
-      <section className="feedback-section compact-card next-step-card">
-        <h3>Suggested next step</h3>
-        <p>{feedback.nextStepHint}</p>
-      </section>
-
-      <div className="detail-row">
-        <details className="feedback-section detail-section confirmed-provenance">
-          <summary>Confirmed interpretation</summary>
-          <ol className="provenance-lines">
-            {sortedConfirmedLines.map((line, index) => {
-              const originalLine = interpretation.lines.find(
-                (candidate) => candidate.id === line.id,
-              )
-              const changed = originalLine?.rawText !== line.confirmedText
-
-              return (
-                <li
-                  className={`${activeLineId === line.id ? 'active' : ''} ${
-                    line.workStatus === 'crossed_out' ? 'crossed-out' : ''
-                  }`}
-                  key={line.id}
-                  onClick={() => onSelectedLineChange(line.id)}
-                >
-                  <div>
-                    <span className="line-id">{index + 1}</span>
-                    <span
-                      className={`work-status-chip status-${line.workStatus}`}
-                    >
-                      {workStatusLabels[line.workStatus]}
-                    </span>
-                    {changed && <span className="changed-chip">Edited</span>}
-                    {line.status === 'not_sure' && (
-                      <span className="unsure-chip">Not sure</span>
-                    )}
-                  </div>
-                  <p>{line.confirmedText}</p>
-                  {changed && originalLine && (
-                    <small>AI originally read: {originalLine.rawText}</small>
-                  )}
-                </li>
-              )
-            })}
-          </ol>
-        </details>
-
-        <details className="feedback-section detail-section">
-          <summary>Transcription</summary>
-          <ol className="transcription-lines">
-            {feedback.transcription.lines.map((line, index) => (
-              <li
-                className={`transcription-line ${
-                  activeLineId === line.id ? 'active' : ''
-                }`}
-                key={line.id}
-                onClick={() => onSelectedLineChange(line.id)}
-              >
-                <span className="line-id">
-                  {lineNumbers[line.id] ?? index + 1}
-                </span>
-                <p>{line.text}</p>
-                {(line.confidence < 0.75 ||
-                  (line.uncertainSymbols && line.uncertainSymbols.length > 0)) && (
-                  <small>
-                    {formatPercent(line.confidence)}
-                    {line.uncertainSymbols && line.uncertainSymbols.length > 0
-                      ? `, unclear: ${line.uncertainSymbols.join(', ')}`
-                      : ''}
-                  </small>
-                )}
-              </li>
-            ))}
-          </ol>
-          <p className="confidence-footnote">
-            Transcription confidence:{' '}
-            {formatPercent(feedback.transcription.overallConfidence)}
-          </p>
-        </details>
-
-        {secondaryIssues.length > 0 && (
-          <details className="feedback-section detail-section secondary-issues">
-            <summary>Secondary issues</summary>
-            <div className="secondary-list">
-              {secondaryIssues.map((issue, index) => (
-                <article key={`${issue.errorType}-${issue.quotedWork ?? index}`}>
-                  <div className="secondary-issue-meta">
-                    <span>{issueTypeLabels[issue.errorType]}</span>
-                    <span>
-                      {resolveLineReference(
-                        issue,
-                        lineNumbers,
-                        visibleLineIds,
-                      )}
-                    </span>
-                  </div>
-                  {issue.quotedWork && <strong>{issue.quotedWork}</strong>}
-                  <p>{issue.explanation}</p>
-                </article>
-              ))}
-            </div>
-          </details>
-        )}
-
-        <details className="feedback-section detail-section">
-          <summary>Model and uncertainty notes</summary>
-          <p>
-            Analysis confidence: {formatPercent(feedback.analysisConfidence)}.
-            {uncertainLines.length > 0
-              ? ` Low-confidence lines: ${uncertainLines
-                  .map(
-                    (line, index) =>
-                      `Line ${lineNumbers[line.id] ?? index + 1}`,
-                  )
-                  .join(', ')}.`
-              : ' No low-confidence transcription lines were flagged.'}
-          </p>
-        </details>
-      </div>
+      </details>
 
       <section className="feedback-section assistance-card">
         <div className="assistance-heading">
@@ -3063,6 +3015,28 @@ function getFeedbackSummary(feedback: FeedbackResult): string {
   }
 
   return statusLabels[feedback.overallStatus]
+}
+
+function getMergedHint(feedback: FeedbackResult): string {
+  const primaryHint = feedback.firstIssue?.hint.trim() ?? ''
+  const nextStep = feedback.nextStepHint.trim()
+  if (!primaryHint) return nextStep
+  if (!nextStep) return primaryHint
+
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const normalizedHint = normalize(primaryHint)
+  const normalizedNextStep = normalize(nextStep)
+
+  if (
+    normalizedHint === normalizedNextStep ||
+    normalizedHint.includes(normalizedNextStep) ||
+    normalizedNextStep.includes(normalizedHint)
+  ) {
+    return primaryHint.length >= nextStep.length ? primaryHint : nextStep
+  }
+
+  return `${primaryHint}\n${nextStep}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

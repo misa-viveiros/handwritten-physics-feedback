@@ -63,3 +63,17 @@ export function createInitialLineStatuses(
     ]),
   )
 }
+
+export function getVerificationSummary(
+  lines: InterpretedLine[],
+  lineStatuses: Record<string, LineReviewStatus | undefined>,
+) {
+  return {
+    total: lines.length,
+    needsReview: lines.filter((line) => !lineStatuses[line.id]).length,
+    acceptedAutomatically: lines.filter(
+      (line) =>
+        !lineNeedsConfirmation(line) && lineStatuses[line.id] === 'correct',
+    ).length,
+  }
+}

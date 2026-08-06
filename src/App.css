@@ -306,9 +306,14 @@
 
 .workspace {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: var(--input-panel-width, 300px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+  transition: grid-template-columns 160ms ease;
+}
+
+.workspace.input-collapsed {
+  grid-template-columns: 42px minmax(0, 1fr);
 }
 
 .input-panel,
@@ -321,14 +326,82 @@
   box-shadow: 0 12px 36px rgba(38, 42, 51, 0.06);
 }
 
-.input-panel {
+.input-panel-shell {
   position: sticky;
   top: 14px;
-  display: flex;
+  min-width: 0;
   max-height: calc(100svh - 28px);
+}
+
+.input-panel {
+  display: flex;
+  max-height: inherit;
   overflow-y: auto;
   flex-direction: column;
   padding: 14px;
+}
+
+.input-panel-shell.collapsed .input-panel {
+  display: none;
+}
+
+.input-panel-heading {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.input-panel-collapse,
+.input-panel-expand {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid #bdc9d0;
+  border-radius: 6px;
+  padding: 0;
+  place-items: center;
+  color: #355a79;
+  background: #fff;
+  font: inherit;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.input-panel-expand {
+  width: 42px;
+  height: 52px;
+  border-color: var(--border);
+  box-shadow: 0 8px 22px rgba(38, 42, 51, 0.09);
+}
+
+.input-panel-resizer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: -10px;
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.input-panel-resizer::after {
+  position: absolute;
+  top: 42%;
+  right: 4px;
+  width: 3px;
+  height: 48px;
+  border-radius: 2px;
+  background: #b8c5cb;
+  content: "";
+}
+
+.input-panel-resizer:hover::after,
+.input-panel-resizer:focus-visible::after {
+  background: #4c8bbe;
 }
 
 .feedback-panel {
@@ -567,7 +640,7 @@ textarea:focus-visible,
 }
 
 .loading-message.idle {
-  visibility: hidden;
+  display: none;
 }
 
 .analyze-button,
@@ -694,8 +767,14 @@ textarea:disabled {
   background: #f3f5f4;
 }
 
+.preview-label {
+  margin: 10px 0 5px;
+  color: var(--text-strong);
+  font-size: 0.82rem;
+}
+
 .preview-area {
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .preview-frame {
@@ -1473,14 +1552,13 @@ textarea:disabled {
 
 .feedback-sections {
   display: grid;
-  grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
   grid-template-areas:
     "revision revision"
+    "issue hint"
     "summary summary"
-    "image issue"
-    "image hint"
-    "next strengths"
-    "details details"
+    "image image"
+    "strengths strengths"
     "solution solution";
   gap: 10px;
 }
@@ -1927,12 +2005,18 @@ textarea:disabled {
   background: #f1fbf9;
 }
 
+.hint-card p {
+  white-space: pre-line;
+}
+
 .strengths-card {
   grid-area: strengths;
 }
 
-.next-step-card {
-  grid-area: next;
+.strengths-card > summary {
+  color: var(--text-strong);
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .detail-row {
@@ -2101,7 +2185,7 @@ textarea:disabled {
 }
 
 .strength-list {
-  margin: 0;
+  margin: 9px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -2302,6 +2386,18 @@ textarea:disabled {
   color: #49515c;
 }
 
+.input-panel :is(button, select, label),
+.feedback-panel :is(button, summary) {
+  font-size: max(0.78rem, 13px);
+}
+
+.confirmation-line,
+.feedback-section,
+.summary-bar,
+.annotated-work-card {
+  font-size: 0.9rem;
+}
+
 @media (max-width: 1020px) {
   .app-shell {
     width: min(100% - 24px, 760px);
@@ -2325,16 +2421,18 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 
+  .workspace.input-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .feedback-sections {
     grid-template-areas:
       "revision"
-      "summary"
-      "image"
       "issue"
       "hint"
+      "summary"
+      "image"
       "strengths"
-      "next"
-      "details"
       "solution";
   }
 
@@ -2356,10 +2454,18 @@ textarea:disabled {
     flex-direction: column;
   }
 
-  .input-panel {
+  .input-panel-shell {
     position: static;
     max-height: none;
+  }
+
+  .input-panel {
+    max-height: none;
     overflow: visible;
+  }
+
+  .input-panel-resizer {
+    display: none;
   }
 
   .preview-frame {

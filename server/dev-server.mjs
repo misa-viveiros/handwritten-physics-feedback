@@ -825,7 +825,9 @@ Identify the earliest causal incorrect, unsupported, or unclear step. If one ups
 
 Distinguish among conceptual errors, incorrect equation selection, algebra errors, sign errors, unit errors, diagram errors, missing reasoning, and unclear handwriting.
 
-Give one targeted hint that helps the student revise the first issue. Do not provide the full worked solution by default.
+Give one targeted hint that helps the student revise the first issue. Keep firstIssue.explanation to one or two short sentences and firstIssue.hint to one direct action. Keep nextStepHint to one short, nonredundant action. Do not restate essentially the same idea across firstIssue.explanation, firstIssue.hint, nextStepHint, likelyMisconception, and suggestedMarkup. Do not provide the full worked solution by default.
+
+When the student's chosen equation or physical relationship is wrong, show the correct relevant equation directly in firstIssue.hint, followed by one brief conceptual sentence explaining why it applies. Put the equation before the prose, for example "F = ma" followed by why net force and acceleration are related. Do not describe the equation indirectly in a long paragraph, and do not continue into substitutions, calculations, a derivation, or the final answer.
 
 If the written work is insufficient to evaluate the reasoning, say so. Do not infer correct reasoning from a final answer alone.
 
@@ -841,7 +843,7 @@ Each annotation must use kind check, underline, circle, cross, question_note, co
 
 Use question_note for conceptual or reasoning errors, including wrong models, missing interactions, equation-choice misconceptions, wrong objects, and conceptually meaningful directions or signs. Do not immediately state the answer. Use correction_note only for a small local mechanical issue such as a missing unit, arithmetic slip, notation typo, isolated algebra transcription error, or sign formatting error when the concept is otherwise sound. If the distinction is uncertain, prefer a question.
 
-On-image noteText should normally be 8 words or fewer, has a soft maximum of 12 words, and must never exceed 15 words or one sentence. Never write generic AI prose such as "There appears to be an issue" or "Consider revisiting your calculation." Prefer compact teacher language such as "Why?", "Check the sign.", "Units?", "Is acceleration zero here?", and "Should N be perpendicular?" Side-panel explanation and hint fields may be longer; do not duplicate those sentences in noteText.
+On-image noteText should normally be 8 words or fewer, has a soft maximum of 12 words, and must never exceed 15 words or one sentence. Never write generic AI prose such as "There appears to be an issue" or "Consider revisiting your calculation." Prefer compact teacher language such as "Why?", "Check the sign.", "Units?", "Is acceleration zero here?", and "Should N be perpendicular?" Keep side-panel explanation and hint fields concise, and do not duplicate those sentences in noteText.
 
 A physics_vector is a physical quantity, not a connector from a note. Use it only when the problem or student work contains a recognizable physical diagram and a specific vector is missing, reversed, or mislabeled. The vector must begin at the relevant object or physical point in the diagram. Never start a physics vector in the annotation margin.
 
@@ -880,7 +882,7 @@ function getAssistanceInstructions(feedbackLevel) {
   if (feedbackLevel === 3) {
     return `Assistance level 3: the separate worked-solution action may now be available. In this diagnosis, still provide concise explicit guidance only. Do not include the complete derivation or final answer here.`
   }
-  return `Assistance level 1: give a conceptual hint, preferably a short teacher-like question. Do not reveal the correct equation, substitution, or final answer unless basic intelligibility requires it.`
+  return `Assistance level 1: give a short conceptual hint. When equation selection is the diagnosed error, state the correct relevant equation and one brief reason it applies, but do not substitute values, derive the result, or reveal the final answer. For other issue types, prefer a short teacher-like question.`
 }
 
 const workedSolutionInstructions = `You are preparing a concise worked solution after a student explicitly requested it and already made at least two unsuccessful revisions of the same core issue.
