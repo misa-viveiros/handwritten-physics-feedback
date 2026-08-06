@@ -2531,7 +2531,6 @@ function FeedbackPanel({
   onReviewInterpretation: () => void
   onSelectedLineChange: (lineId: string | null) => void
 }) {
-  const summary = getFeedbackSummary(feedback)
   const sortedConfirmedLines = sortLinesByOrder(confirmedLines)
   const mergedHint = getMergedHint(feedback)
 
@@ -2554,7 +2553,6 @@ function FeedbackPanel({
             {formatPercent(feedback.analysisConfidence)} confidence
           </span>
         </div>
-        <p>{summary}</p>
         <div className="summary-actions">
           <button
             type="button"
@@ -3011,14 +3009,6 @@ function formatStudyExportStatus(status: StudyExportStatus): string {
   if (status === 'exported') return 'Exported'
   if (status === 'modified_since_export') return 'Modified since export'
   return 'Not exported'
-}
-
-function getFeedbackSummary(feedback: FeedbackResult): string {
-  if (feedback.firstIssue) {
-    return `Start with ${feedback.firstIssue.locationDescription.toLowerCase()}.`
-  }
-
-  return statusLabels[feedback.overallStatus]
 }
 
 function getMergedHint(feedback: FeedbackResult): string {
