@@ -1,10 +1,3 @@
-type ReferenceSource = {
-  lineId?: string
-  targetLineId?: string
-  quotedWork?: string
-  targetDescription?: string
-}
-
 type ReferenceLine = {
   id: string
   order?: number
@@ -32,40 +25,6 @@ export function sortLinesByOrder<T extends ReferenceLine>(lines: T[]): T[] {
       (a.order ?? Number.MAX_SAFE_INTEGER) -
       (b.order ?? Number.MAX_SAFE_INTEGER),
   )
-}
-
-export function createLineNumberMap(
-  lines: ReferenceLine[],
-): Record<string, number> {
-  return Object.fromEntries(
-    sortLinesByOrder(lines).map((line, index) => [line.id, index + 1]),
-  )
-}
-
-export function resolveLineReference(
-  reference: ReferenceSource,
-  lineNumbers: Record<string, number>,
-  visibleLineIds?: Set<string>,
-): string {
-  const lineId = reference.lineId ?? reference.targetLineId
-  if (
-    lineId &&
-    Object.prototype.hasOwnProperty.call(lineNumbers, lineId) &&
-    (!visibleLineIds || visibleLineIds.has(lineId))
-  ) {
-    const quote = reference.quotedWork?.trim()
-    return `Line ${lineNumbers[lineId]}${quote ? `, ${quote}` : ''}`
-  }
-
-  if (reference.quotedWork?.trim()) {
-    return `Near: ${reference.quotedWork.trim()}`
-  }
-
-  if (reference.targetDescription?.trim()) {
-    return `Target: ${reference.targetDescription.trim()}`
-  }
-
-  return 'Relevant step'
 }
 
 export function createLineGutterItems(

@@ -1,97 +1,301 @@
-# Handwritten Physics Feedback
+# Localized AI Feedback for Handwritten Physics Solutions
 
-A React, TypeScript, and Node prototype that interprets a photo of a student's
-handwritten physics solution, lets the student confirm the transcription, and
-returns progressive revision-oriented feedback with non-destructive
-annotations. The evaluated scope is introductory mechanics, with bounded
-free-body-diagram feedback.
+## Overview
 
-## Run Locally
+This repository contains a research prototype that interprets handwritten
+introductory physics work and returns revision-oriented feedback. Its primary
+focus is localized graphical feedback on free-body diagrams (FBDs): concise
+teacher-style marks and semantic force vectors are placed directly beside the
+student's unchanged work.
+
+The system is designed to help a student locate and revise their own reasoning.
+It does not reveal a worked solution by default, and it is not intended to act
+as an automatic grader or general-purpose physics solver.
+
+## Research Focus
+
+The current primary research question is:
+
+> How does placing graphical annotations directly on handwritten free-body
+> diagrams affect students' ability to identify where their reasoning needs
+> attention?
+
+An exploratory pilot has informed the interaction design. A full user study
+addressing this question remains future work.
+
+## Key Features
+
+- Camera capture, image upload, and PDF page import
+- Faithful handwriting interpretation with selective user verification
+- Physics diagnosis based on the user-confirmed transcription
+- Localized checks, underlines, circles, crosses, and teacher-style notes
+- Semantic force-vector annotations for bounded FBD configurations
+- Zoomable annotated work with synchronized image and overlays
+- Multiple revision attempts with prior-attempt preservation and comparison
+- Progressive assistance, with an optional worked solution only after repeated
+  unsuccessful revisions
+- Optional study-mode interaction logging with one-click JSON export
+- Responsive UI tested during development on desktop and Android tablet/mobile
+
+## Interaction Workflow
+
+**Interpret -> Verify -> Diagnose -> Annotate -> Revise -> Escalate**
+
+1. **Interpret:** The model transcribes the uploaded handwriting and locates
+   visible lines or diagram elements.
+2. **Verify:** The student confirms or edits only interpretations that need
+   review; automatically accepted lines remain available for deliberate edits.
+3. **Diagnose:** The model uses the confirmed text and image context to identify
+   the earliest causal reasoning issue.
+4. **Annotate:** Sparse feedback is drawn non-destructively over the displayed
+   work while concise explanation and hint cards remain alongside it.
+5. **Revise:** The student can upload another attempt without losing earlier
+   attempts in the current browser session.
+6. **Escalate:** Assistance becomes more explicit after unsuccessful revisions;
+   a worked solution is a separate, deliberate final action.
+
+## Supported Physics Scope
+
+The prototype targets introductory mechanics. Its bounded FBD handling covers:
+
+- Objects on horizontal surfaces
+- Objects on inclines
+- Hanging masses
+- Two objects connected by one rope
+- Basic circular-motion force diagrams
+
+Representative FBD checks include missing or extraneous forces, reversed
+directions, incorrect labels, forces assigned to the wrong object,
+velocity/acceleration drawn as forces, non-perpendicular normal forces,
+friction direction, gravity components, tension, Newton's third-law
+relationships, and centripetal force treated as an extra interaction.
+
+Other introductory mechanics calculations can receive equation, algebra, sign,
+unit, diagram, and missing-reasoning feedback. The model is intentionally
+conservative about diagram geometry and falls back to text when placement is
+uncertain. This is not a general-purpose or formally verified physics solver.
+
+## Tech Stack
+
+- React 19 and TypeScript
+- Vite 8
+- Node.js HTTP server
+- OpenAI JavaScript SDK and Responses API
+- PDF.js for client-side PDF page rendering
+- Render for single-service deployment
+
+## Repository Structure
+
+```text
+src/
+  App.tsx                       Main workflow and session state
+  AnnotatedImageView.tsx        Non-destructive feedback overlays and zoom
+  InterpretationImageView.tsx   Interpretation review over the original work
+  feedback*.ts                  Feedback types and client validation
+  interpretation*.ts            Interpretation types, editing, and validation
+  studyLog.ts                   In-memory study log and JSON export
+  problems/problemBank.ts       Reviewed practice-problem data
+server/
+  dev-server.mjs                Development/production server and API prompts
+  *-schema.mjs                  Server validation and normalization
+  *.test.mjs                    Node test suite and annotation fixtures
+public/
+  favicon.svg
+render.yaml                     Render Web Service configuration
+.env.example                    Safe environment-variable template
+PROJECT_NOTES.md                Design decisions and research handoff notes
+```
+
+## Local Setup
+
+### Prerequisites
+
+- Node.js `^20.19.0` or `>=22.12.0` (required by Vite 8)
+- npm
+- An OpenAI API key for AI analysis
+
+### Install and run
 
 ```powershell
-npm.cmd install
+git clone <repository-url>
+cd handwritten-physics-feedback
+npm.cmd ci --include=dev
+Copy-Item .env.example .env.local
+```
+
+Edit `.env.local` and replace the placeholder `OPENAI_API_KEY`. Then run:
+
+```powershell
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5174`.
-
-Use the three-line menu in the top-right corner to enter an OpenAI API key.
-The key is kept in browser `sessionStorage` for the current tab and sent to the
-local backend only when an analysis request is made.
-
-Alternatively, create `.env.local`:
-
-```text
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-luna
-VITE_STUDY_MODE=false
-VITE_STUDY_INCLUDE_TRANSCRIPTION=false
-```
-
-Never commit a real API key. Only enter a browser key when running a trusted
-copy of the project.
-
-## Hosting Note
-
-The OpenAI request is made by the included Node backend, not directly by the
-React application. Static GitHub Pages hosting is therefore not sufficient;
-deploy the frontend and backend together or clone the repository and run
-`npm.cmd run dev`.
-
-For a production-style local run or a single Render web service:
+Open [http://127.0.0.1:5174](http://127.0.0.1:5174). The one development
+command starts the Node API server and Vite middleware. To use another port:
 
 ```powershell
+$env:PORT=5180; npm.cmd run dev
+```
+
+The top-right settings menu also supports a user-supplied key for testing a
+trusted copy. That key is stored in `sessionStorage` for the current browser
+tab and sent only to this app's same-origin backend. It is not built into the
+frontend and does not replace secure server configuration for deployment.
+
+## Environment Variables
+
+| Variable | Required | Scope | Description |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | Yes for normal deployment | Server | OpenAI credential used by API routes. Keep it in `.env.local` or a deployment secret store. A tab-scoped user key can be supplied explicitly for trusted local/test copies. |
+| `OPENAI_MODEL` | No | Server | Model name. Defaults to `gpt-5.6-luna`; `gpt-5.6-terra` remains compatible for difficult cases or final evaluation. |
+| `PORT` | No | Server | Listening port. Defaults to `5174`; Render supplies this automatically. |
+| `VITE_STUDY_MODE` | No | Build/client | Set to `true` to include study-session controls. Defaults to `false`. |
+| `VITE_STUDY_INCLUDE_TRANSCRIPTION` | No | Build/client | Includes confirmed transcription text in study exports only when study mode is also enabled. Defaults to `false`. |
+
+`VITE_*` values are public and compiled into the frontend. Never place a
+secret in them.
+
+## Development Commands
+
+| Command | Purpose |
+| --- | --- |
+| `npm.cmd run dev` | Start the combined Node/Vite development server |
+| `npm.cmd run dev:vite` | Start Vite alone; API requests require another server |
+| `npm.cmd run lint` | Run ESLint |
+| `npm.cmd test` | Run the Node test suite |
+| `npm.cmd run check:server` | Syntax-check the Node server |
+| `npm.cmd run build` | Type-check and build the production frontend |
+| `npm.cmd start` | Serve `dist/` and the API in production mode |
+| `npm.cmd run preview` | Preview only the Vite build |
+
+There is no separate type-check script; `npm.cmd run build` runs `tsc -b`
+before `vite build`.
+
+## Production Build
+
+```powershell
+npm.cmd ci --include=dev
 npm.cmd run build
 npm.cmd start
 ```
 
-`npm start` serves the built Vite application from `dist/` and all `/api/*`
-routes from the same Node process. The server binds to `0.0.0.0` and reads
-Render's `PORT` automatically. A Render Blueprint is provided in `render.yaml`;
-enter `OPENAI_API_KEY` as a secret in Render rather than committing it.
+The production Node process serves static files from `dist/`, falls back to
+`dist/index.html` for non-API browser routes, and handles the same-origin API.
+The server listens on `0.0.0.0` and reads `process.env.PORT`.
 
-Supported input methods are `Take photo`, `Upload image`, and PDF upload from a
-note-taking app such as Samsung Notes. On supported mobile devices, `Take
-photo` opens the rear-camera capture flow. The general upload action accepts an
-image or PDF without requesting camera capture.
+## Deploying to Render
 
-PDF.js renders the selected PDF page to a bounded, high-resolution JPEG in the
-browser before the normal image-analysis workflow begins. Single-page PDFs use
-page 1 automatically; multi-page PDFs show a compact page selector and analyze
-only one page at a time. There is no direct Samsung Notes integration. Study
-mode adds an explicit, local pilot-session logger.
+The checked-in `render.yaml` defines one Node Web Service.
 
-## Pilot Study Mode
+1. Connect this GitHub repository to a new Render Web Service, or apply the
+   Blueprint from `render.yaml`.
+2. Use the Node.js runtime.
+3. Use build command `npm ci --include=dev && npm run build`.
+4. Use start command `npm start`.
+5. Add `OPENAI_API_KEY` as a manually entered secret.
+6. Keep `OPENAI_MODEL=gpt-5.6-luna`, or use `gpt-5.6-terra` for selected
+   evaluation/difficult cases.
+7. Set the two `VITE_*` variables for the intended study build.
+8. Use `/api/health` as the health-check path.
 
-Study mode is off by default. Enable it at build time:
+Render supplies `PORT`; do not set `NODE_ENV` or a fixed port manually.
+Changing a `VITE_*` value requires a rebuild/redeploy because those settings
+are compiled into the frontend.
 
-```text
-VITE_STUDY_MODE=true
-VITE_STUDY_INCLUDE_TRANSCRIPTION=false
-```
+In production, the Node service serves both the built Vite app and
+`/api/interpret-solution`, `/api/diagnose-solution`, and
+`/api/generate-worked-solution`. Browser requests use relative `/api/...`
+URLs. The deployment's `OPENAI_API_KEY` is read only by Node and is never
+included in `dist/`.
 
-Restart the development server after changing these values. On Render, set
-`VITE_STUDY_MODE=true` and redeploy because Vite flags are compiled into the
-frontend.
+### Render troubleshooting
 
-The researcher-only `Pilot Study` panel accepts a participant ID such as
-`P01`, a task ID such as `T01`, and an optional short note. Click `Start
-session`, run one task, optionally click `End session`, and click `Export JSON`.
-Export also works while a session is running and calculates duration through
-the export time. A typical filename is
-`physics-feedback_P01_T01_20260804T153000Z.json`.
+- **Build cannot find Vite or TypeScript types:** confirm the build command is
+  `npm ci --include=dev && npm run build` and remove settings that omit
+  development dependencies.
+- **Missing key or HTTP 401:** add `OPENAI_API_KEY` in Render's Environment
+  settings, then restart/redeploy.
+- **API returns 5xx:** inspect Render logs for the sanitized upstream error;
+  verify the model name, key permissions, request size, and OpenAI availability.
+- **Study controls are stale:** update the `VITE_*` value and trigger a full
+  rebuild, not only a process restart.
+- **Frontend loads but API does not:** verify the service uses `npm start`,
+  check [`/api/health`](http://127.0.0.1:5174/api/health) on the deployed
+  domain, and confirm requests remain relative.
+- **Camera/upload choices differ by device:** browser and Android file pickers
+  control the available camera, gallery, and files options. Use the dedicated
+  camera action or export from the notes app and choose image/PDF upload.
 
-The JSON contains session timing, source type, transcription-review counts,
-diagnosis summary, annotation kinds, revision outcomes, assistance level,
-worked-solution state, safe error counts, and a chronological event list. It
-does not contain uploaded images, PDF bytes, base64, Blob URLs, API keys,
-filesystem paths, full request payloads, or raw model responses. Confirmed
-transcription text is excluded when
-`VITE_STUDY_INCLUDE_TRANSCRIPTION=false`, which is the recommended default.
+## Study Mode
 
-Logs remain in browser memory and are downloaded only when the researcher
-clicks `Export JSON`. Export each session before starting another; the app
-warns before replacing unexported or modified session data.
+Set `VITE_STUDY_MODE=true` before building to show study controls. Set
+`VITE_STUDY_INCLUDE_TRANSCRIPTION=true` as well only when the approved study
+protocol permits confirmed transcription text in exports.
 
-See `PROJECT_NOTES.md` for the workflow, schema, privacy notes, and current
-limitations.
+The log exists in browser memory for the current app session and is downloaded
+only when the researcher clicks **Export JSON**. It records:
+
+- Session/task identifiers, timestamps, duration, and upload source category
+- The problem statement and optional researcher note
+- Interpretation review counts and interaction events
+- Diagnosis status/type/confidence metadata
+- Annotation kinds/counts, revision outcomes, assistance level, and safe error
+  categories
+- Confirmed transcription only under the explicit two-variable opt-in above
+
+Exports intentionally omit uploaded image/PDF content, base64 data, file names,
+API keys, raw model requests/responses, device paths, IP addresses, cookies,
+and fingerprinting metadata. Export one JSON file per participant task/session
+and store it according to the approved research protocol. Refreshing or closing
+the page before export can lose the in-memory log.
+
+## Pilot Study / Current Research Status
+
+An exploratory pilot with two participants was completed to refine interaction
+and usability. It was not a learning-effect evaluation and contains no basis
+for claims that the prototype improves learning. The outstanding research task
+is a full user study centered on localized FBD feedback.
+
+## Known Limitations
+
+- Scope is limited to introductory mechanics and bounded FBD configurations.
+- Output quality depends on a vision-language model and may vary.
+- Ambiguous handwriting, crossed-out work, cropping, and dense diagrams can
+  still require user confirmation or text-only fallback.
+- Annotation placement is confidence-gated but not infallible.
+- The system does not formally verify every symbolic, numerical, or physical
+  claim with a computer algebra system or simulation.
+- There has been no causal learning evaluation or longitudinal deployment.
+- Uploaded work is sent to the configured OpenAI service for analysis; this
+  prototype has not been certified for sensitive classroom data.
+
+## Future Work
+
+- Conduct the full user study.
+- Compare localized graphical annotations with detached textual feedback.
+- Add optional photo/screenshot input for the problem statement.
+- Generate similar practice problems from a supplied problem.
+- Explore simulation-grounded feedback and visualization.
+- Extend coverage to broader physics domains and richer diagrams.
+
+The latter convenience features are not central to the current research
+contribution and should not displace the full study.
+
+## Handoff / Continuing the Project
+
+Start by reproducing the local checks and a complete interpret/verify/diagnose/
+annotate/revise flow. Verify API configuration, then deploy a private test
+instance if needed. Preserve the current pilot-derived interaction behavior when
+preparing the full study, and record the exact commit and deployment build used
+for each participant. Never commit, log, or expose API keys.
+
+The recommended next research task is the full user study, not another feature
+expansion.
+
+## Citation / Research Use
+
+If you use or extend this prototype in research, please cite the associated
+paper or project report once available.
+
+## License
+
+No license has currently been specified.

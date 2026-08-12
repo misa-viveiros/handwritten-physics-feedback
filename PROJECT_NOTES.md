@@ -1,424 +1,199 @@
-# Handwritten Physics Feedback Project Notes
-
-## Current Scope
-
-This prototype is a local React + TypeScript + Vite app for exploring
-handwritten introductory-mechanics feedback. It supports handwritten equations
-and bounded free-body diagrams as the main evaluated contribution. A student
-selects a problem, uploads or photographs handwritten work, confirms what the
-system read, and receives progressive revision-oriented feedback.
-
-The tool is designed to analyze the student's own reasoning. It does not assign
-a grade, train or fine-tune a model, include teacher rubric input, reconstruct
-arbitrary diagrams, or run a physics simulation.
-
-## Two-Stage Workflow
-
-The pilot workflow deliberately separates handwriting interpretation from physics diagnosis:
-
-1. `POST /api/interpret-solution` sends the problem statement and original image to the vision-language model. It returns only ordered transcription lines, reading confidence, uncertain symbols, interpretation notes, and optional normalized image regions. It does not return correctness feedback.
-2. The student reviews every line, edits text when needed, and marks each line `Correct`, `Needs correction`, or `Not sure`.
-3. `POST /api/diagnose-solution` sends the problem statement, original image, and confirmed lines to the model. The confirmed text is authoritative. The image is used for diagrams, layout, and unresolved regions.
-
-Student confirmation makes recognition errors visible and contestable before they can be mistaken for physics errors. The initial line confidence describes interpretation uncertainty. The later analysis confidence describes uncertainty in the physics diagnosis. These are separate signals.
-
-The confirmation model is intentionally line-based. It is not yet a general `StudentSolutionGraph`, equation graph, or diagram editor.
-
-## Editable Interpretation Regions
-
-Located interpretation lines appear as normalized rectangular regions over the
-original image. Selecting a region reveals four corner handles. Regions can be
-dragged, resized, nudged with the arrow keys, or deselected with Escape. All
-coordinates remain normalized from 0 to 1, are clamped to the displayed image,
-and never alter the uploaded pixels.
-
-The interpretation panel supports deleting a line with a temporary Undo,
-merging with the previous or next line, and drawing an optional missing region.
-A merge creates a new stable internal line ID, uses the bounding rectangle of
-the source regions, combines their text and uncertain symbols in reading order,
-and requires review. A newly drawn region starts with blank text and must be
-completed or deleted before feedback can continue. Display numbers are
-regenerated from visual top-to-bottom, then left-to-right order; they are not
-stable IDs.
-
-Each attempt tracks `contentDirty` separately from `geometryDirty`. Text,
-status, line membership, merge, add, delete, or reading-order changes make the
-confirmed content stale and trigger diagnosis when its normalized snapshot
-changes. Moving or resizing a region without changing order is geometry-only:
-the cached diagnosis is reused and line-linked overlay geometry is re-anchored
-where possible. No VLM request occurs during direct manipulation.
-
-Region editing currently supports rectangular bounding boxes only. It does not
-provide polygonal outlines, rotation, or freehand selections.
-
-## Unlimited Revision Workflow
-
-The frontend stores a `ProblemSession` containing the authoritative problem
-statement, optional reviewed-problem ID/title, an array of `SolutionAttempt`
-records, and the active attempt ID. Each attempt owns its uploaded image,
-interpretation, line-review statuses, confirmed transcription and normalized
-snapshot, diagnosis, annotations, timestamps, and workflow stage.
-
-After feedback, `Try again` appends a new empty attempt and makes it active.
-There is no frontend attempt limit. The compact attempt-history control shows
-the status of every attempt; selecting an earlier attempt restores its image,
-confirmed interpretation, feedback, and annotations from memory without an API
-call. Only one full attempt workspace is displayed at a time.
-
-Each diagnosed attempt is compared deterministically with the immediately
-previous attempt using confirmed text and structured diagnoses. Returning from
-transcription review restores cached feedback immediately when the normalized
-confirmed snapshot is unchanged. Editing confirmed text makes only that
-attempt's diagnosis stale and triggers a replacement diagnosis when the student
-continues.
+# Project Notes
 
-`Start this attempt over` clears only the active attempt. `Try a different
-problem` clears the problem and all attempt history; analyzed sessions require
-confirmation first.
+This file records implementation and research decisions that are useful for a
+future maintainer. Setup and deployment instructions belong in
+`README.md`.
 
-## Progressive Feedback
+## Current Research Focus
 
-Each diagnosed attempt stores an `AssistanceState` with a feedback level, the
-number of meaningful revisions for the current core issue, an issue key, and
-worked-solution lock/reveal state.
+The prototype studies localized graphical feedback on handwritten
+introductory-physics work, with particular emphasis on free-body diagrams.
 
-- Level 1 gives a conceptual teacher-like question and avoids the correct
-  equation or answer.
-- Level 2 follows the first unsuccessful meaningful revision of the same issue
-  and may name the relevant principle or relationship.
-- Level 3 follows the second unsuccessful meaningful revision of the same
-  issue and unlocks `View worked solution`.
+Primary research question:
 
-The complete solution is never generated during diagnosis. The student must
-click the unlocked button and confirm that complete reasoning and the answer
-will be shown. Only then does `POST /api/generate-worked-solution` request a
-structured sequence of steps, equations, substitutions, units, final answer,
-optional diagram explanation, confidence, and limitations.
+> How does placing graphical annotations directly on handwritten free-body
+> diagrams affect students' ability to identify where their reasoning needs
+> attention?
 
-Attempts increment only when a newly diagnosed attempt has meaningfully changed
-confirmed text and the comparison says the same issue remains. Reopening or
-accepting unchanged transcription reuses the cached diagnosis. API failures do
-not update assistance state. A resolved or genuinely different issue resets the
-counter and returns assistance to Level 1.
+The interface supports revision rather than grading or immediate answer
+generation. The outstanding research task is a full user study.
 
-## Reviewed Problem Bank
+## Completed Implementation
 
-`src/problems/problemBank.ts` contains 10 concise, human-reviewable practice
-problems across kinematics, projectile motion, Newton's laws, friction, and
-energy. Each entry has an ID, title, topic, difficulty, statement, optional
-assumptions, expected concepts, common errors, and a `studyRecommended` flag.
-Expected concepts and common errors are development metadata and are not shown
-to students or sent to the diagnosis API.
+- Combined React/TypeScript frontend and Node API service
+- Camera, image, and PDF-page input
+- Two-stage OpenAI Responses API workflow:
+  1. handwriting/diagram interpretation
+  2. diagnosis from user-confirmed text plus image context
+- Selective confirmation for ambiguous lines and crossed-out work
+- Localized non-destructive annotation overlays
+- Semantic physics vectors distinct from note leader lines
+- Confidence-gated fallback to text when geometry is unreliable
+- Zoom controls, wheel/pinch zoom, and responsive coordinate alignment
+- Resizable/collapsible problem panel and compact feedback sidebar
+- Multiple in-session revisions with prior-attempt preservation/comparison
+- Three levels of progressive assistance
+- Separate worked-solution request after repeated unsuccessful revisions
+- Optional in-memory study logging and JSON export
+- Single-service Render deployment with a health endpoint
 
-The compact picker lists every reviewed problem by short title and supports
-custom problem text plus `Pick another` without immediately repeating the
-selected problem. Topic, difficulty, study approval, expected concepts, and
-common errors remain internal metadata and do not appear in the normal
-interface. Pilot studies should use reviewed problems for consistent wording
-and conditions.
+## Core Workflow and Routes
 
-AI-generated practice problems are future work only. If added, they must use
-structured output, remain editable, be labeled as unreviewed, and must never be
-added automatically to the reviewed study bank.
+The primary path is:
 
-## Environment Variables
+`interpret -> verify -> diagnose -> annotate -> revise -> escalate`
 
-Create a local `.env.local` file. The local backend loads `.env.local` first and then `.env`.
+- `POST /api/interpret-solution` transcribes and localizes work without
+  judging correctness.
+- `POST /api/diagnose-solution` treats confirmed text and work-status fields
+  as authoritative, then returns structured feedback and markup.
+- `POST /api/generate-worked-solution` is a deliberate progressive-assistance
+  endpoint, not the default response.
+- `GET /api/health` returns `{"ok":true}`.
 
-Optional server-wide credential:
+`POST /api/analyze-solution` is retained as a legacy one-stage compatibility
+route. The current frontend does not call it. Remove it only after confirming no
+external test or research client depends on it.
 
-- `OPENAI_API_KEY`
+All frontend requests use same-origin relative URLs. Images are base64-encoded
+for the request and handled in memory. PDFs are rendered to a selected JPEG page
+in the browser before analysis; the original PDF is not uploaded.
 
-Optional:
+## Important Design Decisions
 
-- `OPENAI_MODEL`, defaults to `gpt-5.6-luna`
-- `PORT`, defaults to `5174`
-- `VITE_STUDY_MODE`, defaults to `false`
-- `VITE_STUDY_INCLUDE_TRANSCRIPTION`, defaults to `false`
+### Confirmation
 
-Luna is the cost-efficient default for development and routine testing. Set
-`OPENAI_MODEL=gpt-5.6-terra` for final evaluation or especially difficult
-handwriting and reasoning cases.
+Automatically accepted lines remain automatically accepted when opened.
+User-confirmed review cards collapse after confirmation and can be reopened
+deliberately. Counts derive from line state rather than click history.
 
-Do not put a real API key in committed files. Frontend code cannot read
-`OPENAI_API_KEY` or `OPENAI_MODEL`; only the Node backend reads those
-environment variables.
+### Diagnosis
 
-## Browser API Key
-
-The top-right menu allows a tester to provide their own OpenAI API key without
-editing `.env.local`. The key is stored in `sessionStorage`, is removed when
-the browser-tab session ends, and is sent to the same-origin backend only in
-the `X-OpenAI-API-Key` request header. It is not included in analysis JSON,
-attempt history, URLs, Vite environment variables, or repository files.
-
-For each request, a browser-supplied key takes precedence. When no browser key
-is supplied, the backend falls back to `OPENAI_API_KEY`. Testers should enter a
-key only when running a trusted copy of this project.
-
-Sharing the GitHub repository does not create a static deployment: testers
-must clone the project and run the included Node backend with `npm.cmd run
-dev`, or deploy both the frontend and backend together. GitHub Pages alone
-cannot run the analysis endpoints.
-
-## How To Run
-
-Install dependencies:
-
-```powershell
-npm.cmd install
-```
-
-Start the combined local frontend and backend:
-
-```powershell
-npm.cmd run dev
-```
-
-This serves the Vite app and the backend endpoint from the same local origin.
-
-Production-style startup serves the compiled frontend and API from one Node
-process:
-
-```powershell
-npm.cmd run build
-npm.cmd start
-```
-
-The production server resolves `dist/` relative to its own module, binds to
-`0.0.0.0`, uses `PORT` with a `5174` fallback, and returns `dist/index.html`
-for unknown non-API GET routes. Unknown `/api/*` routes remain JSON 404s. The
-Render health check is `GET /api/health`. Images are decoded and processed in
-memory only; the server does not write uploads to disk.
-
-Optional frontend-only Vite server:
-
-```powershell
-npm.cmd run dev:vite
-```
-
-Frontend-only mode is useful for UI work, but AI analysis will not work because the interpretation and diagnosis API endpoints are unavailable.
-
-## AI Workflow
-
-The app requires:
-
-- a non-empty physics problem statement
-- a JPG, PNG, or WEBP uploaded image
-- an API key entered from the top-right menu or `OPENAI_API_KEY` in `.env.local`
-- the combined dev server running with `npm.cmd run dev`
-
-The browser converts the selected image to base64 and sends it with the problem statement to `POST /api/interpret-solution`. After confirmation, it sends the same image plus the confirmed transcription to `POST /api/diagnose-solution`. The Node backend validates both requests, reconstructs a data URL, and uses the OpenAI Responses API through the official JavaScript SDK. Environment keys remain server-side; a session key entered in the menu is transmitted to that backend for the request.
-
-The interpretation and diagnosis endpoints request and validate structured JSON. Interpretation coordinates are normalized from 0 to 1 and clamped; missing or unreliable locations fall back to text-only confirmation. Diagnosis responses use the existing `FeedbackResult` schema. Worked solutions use a separate endpoint and schema and are generated only after explicit reveal confirmation. The legacy `POST /api/analyze-solution` route remains available for compatibility but is not used by the two-stage interface.
-
-## Worksheet Annotations
-
-The visual language of the annotation system is informed by common instructor-markup practices, while the feedback strategy emphasizes revision-oriented formative guidance. It is not intended to perfectly imitate an individual teacher.
-
-Every annotation is normalized to one semantic intent: `check`, `underline`,
-`circle`, `cross`, `question_note`, `correction_note`, or `physics_vector`.
-Legacy `dashed_box`, `question_mark`, `note_only`, `note`, and `arrow` values
-remain readable and map into that vocabulary, so prior feedback data does not
-break.
-
-The annotation policy follows nine principles:
-
-1. Keep feedback spatially local when reliable geometry is available.
-2. Use a compact vocabulary of checks, underlines, circles, crosses, short notes, and physics vectors.
-3. Leave correct work mostly unmarked; reserve checks for meaningful reasoning or a resolved revision.
-4. Ask short questions for conceptual mistakes instead of revealing the correction.
-5. Use direct corrections only for small mechanical mistakes such as units or notation.
-6. Prefer graphical feedback for diagram and vector errors when geometry is reliable.
-7. Mark the first causal issue rather than every downstream consequence.
-8. Keep explanation and progressive guidance in the side panel rather than on the page.
-9. Choose the least intrusive mark that communicates the issue.
-
-The browser places notes rather than trusting model-selected text coordinates.
-It tests right, above-right, below-right, above, and below placements against
-interpreted handwriting, annotation targets, physics vectors, and already
-placed notes. If no local whitespace is safe, it uses the existing right
-margin and one orthogonal leader that avoids crossing the page where possible.
-When useful feedback cannot be localized reliably, Annotated work shows one
-brief placement notice instead of exposing internal markup records.
-
-On-page notes are intentionally brief revision cues, not worked solutions.
-They normally contain at most eight words and are deterministically limited to
-one sentence and fifteen words. The renderer displays no more than three marks
-per diagnosis pass, prioritizes the primary issue and related cue, and allows
-only one positive check by default. Longer reasoning remains in the feedback
-panel.
-
-Deterministic annotation fixtures cover a correct equation, missing unit,
-conceptual equation choice, missing friction, extra third-law force, wrong
-normal direction, a downstream error chain, a correct FBD, low-confidence
-handwriting, and a resolved revision.
-
-## Free-Body Diagrams
-
-Bounded semantic FBD support covers five introductory-mechanics families:
-
-1. Object on a horizontal surface
-2. Object on an incline
-3. Hanging mass
-4. Two objects connected by one rope
-5. Basic circular-motion force diagram
-
-Corrections identify the target object, semantic vector kind, and whether the
-student vector is missing, extra, reversed, mislabeled, on the wrong object, or
-not a force. Bounded kinds include weight, normal, friction, tension, applied
-force, net inward force, components, velocity, and acceleration.
-
-Physics vectors are drawn only above the geometry confidence threshold. A
-replacement vector is offset slightly from the student's existing vector, and
-labels are placed against interpreted writing regions to reduce collisions.
-Missing forces may receive a semantic vector plus a short question. Extra or
-wrong-object forces receive a cross or circle on the student's existing mark,
-not a replacement vector. Wrong directions are marked first; a corrected
-candidate vector is added only above the existing confidence threshold.
-Low-confidence geometry remains text-only and triggers the brief placement
-warning in Annotated work.
-
-Deterministic fixtures cover missing friction, an extra third-law force,
-incorrect incline normal, swapped gravity components, missing hanging-mass
-tension, object-specific rope tension, and an extra centripetal force.
-
-## Camera Capture
-
-The sidebar uses one file input with two compact actions. `Upload image or PDF`
-opens the general file picker with `image/*,application/pdf`. `Take photo`
-temporarily applies
-`capture="environment"` and `accept="image/*"` so supported mobile browsers can
-open the rear camera. Captured files use the same validation, preview,
-interpretation, and diagnosis workflow. The original file and orientation
-metadata are preserved; there is no persistent camera permission, live preview,
-video, WebRTC, or custom camera interface.
-
-PDF import uses Mozilla PDF.js in the browser. A single-page PDF renders page 1
-automatically. A multi-page PDF shows a page selector and renders only the
-selected page to JPEG at up to 2x scale, 2600 pixels on the longest edge, and 6
-megapixels. The rendered image then uses the same preview, coordinate mapping,
-interpretation, diagnosis, and annotation pipeline as an uploaded photo. The
-original PDF is not sent to the analysis API. There is no direct Samsung Notes
-integration; students export a note as an image or PDF first.
-
-## Pilot Study Logging
-
-Set `VITE_STUDY_MODE=true` and restart or redeploy to show the researcher-only
-`Pilot Study` panel. Production defaults remain `VITE_STUDY_MODE=false` and
-`VITE_STUDY_INCLUDE_TRANSCRIPTION=false` in `.env.example` and `render.yaml`.
-
-The researcher enters a participant ID and task ID, optionally adds one short
-note, and explicitly starts a session. Start creates a fresh schema `1.0` log,
-automatic session ID, UTC start time, and `session_started` event. End records
-`session_ended`, end time, and duration. Export is available before or after
-End and computes duration through export time when necessary.
-
-The panel displays live duration, event count, and `Not exported`, `Exported`,
-or `Modified since export`. Starting another session warns when the current
-data has not been exported since its latest change. Normal problem and attempt
-resets add `reset_clicked`; they do not erase the study session.
-
-The exported JSON combines aggregate fields with chronological events for
-source selection, interpretation and diagnosis analysis, transcription review
-and distinct line edits, diagnosis display, rendered annotation summaries,
-revision submissions/results, assistance-level changes, worked-solution
-unlock/view, resets, and safe API/client error categories. Revision outcomes
-come from the existing revision comparison, assistance levels come from the
-existing assistance state, and annotation counts come from structured markup
-objects rather than visible DOM text.
-
-Upload instrumentation may include `sourceType`, `pdfPageNumber`, and
-`pdfPageCount`. It excludes original filenames, local paths, image bytes, PDF
-bytes, and device metadata.
-
-The log never includes image or PDF contents, base64, Blob URLs, filenames,
-filesystem paths, API keys, full HTTP payloads, raw model responses, IP
-addresses, cookies, or fingerprinting data. API errors include only endpoint
-name and HTTP status; client errors use a short category. Confirmed
-transcription is excluded by default and is included only when both study mode
-and `VITE_STUDY_INCLUDE_TRANSCRIPTION=true` are explicitly configured.
-
-Logging is in memory only. There is no database, analytics provider, tracking
-pixel, cookie, server upload, or localStorage persistence. A successful export
-downloads pretty-printed JSON with a sanitized filename such as
-`physics-feedback_P01_T01_20260804T153000Z.json`; blank IDs use the short
-session-ID form. Researchers must export before refreshing the page or starting
-a fresh session.
-
-## Demo Path
-
-Choose the reviewed practice problem `Box slowing on a rough floor`, then upload
-or photograph a diagram with weight downward, normal upward, velocity rightward,
-and no friction force. The intended flow is interpretation review, a
-missing-friction diagnosis, a leftward `f_k` overlay, and the teacher-like
-question "What force is slowing the box?" A revised upload then demonstrates
-issue resolution or stronger guidance. After two meaningful unsuccessful
-revisions of the same issue, the worked-solution action becomes available but
-remains collapsed until the student explicitly confirms it.
-
-## Crossed-Out Work
-
-Each interpreted line carries an independent work status: `active`,
-`crossed_out`, `partially_crossed_out`, or `unclear`. The interpretation model
-also supplies a status confidence and brief visible evidence when cancellation
-marks are present. Transcription confidence and crossed-out confidence are
-separate so an equation can be read clearly while its cancellation status is
-uncertain.
-
-Uncertain cancellation is included in selective confirmation. The student can
-mark the line as crossed out, active, or partially crossed out, and that choice
-becomes authoritative. Diagnosis receives every confirmed line for provenance,
-but treats only active uncrossed lines as the submitted reasoning. Crossed-out
-work may support a concise teaching observation and cannot receive a positive
-check annotation.
-
-Original work and Annotated work share one order-based line-number map. Located
-lines appear in a 5% left gutter aligned to the vertical center of their image
-regions; close labels are staggered. The Annotated work stage reserves 68% for
-the unchanged student page and 23% for teacher notes. Normalized model
-coordinates remain relative to the page itself, so the gutter is excluded from
-all interpretation and annotation geometry.
-
-## Input Limits
-
-Supported image formats:
-
-- JPG/JPEG
-- PNG
-- WEBP
-- PDF exported from a note-taking app
-
-HEIC/HEIF is not supported yet. The image size limit is 8 MB and the source PDF
-limit is 20 MB. Only one PDF page is rendered and analyzed at a time.
-
-## Current Limitations
-
-- This is a research prototype, not a classroom deployment-ready system.
-- Uploaded image and problem text are sent to an external AI service.
-- No teacher rubric input is implemented. Teacher/rubric support remains a possible future improvement, not a dependency for the initial system.
-- Worked solutions are delayed but still model-generated and require manual
-  feasibility review.
-- Interpretation highlights and feedback annotations are non-destructive overlays; they do not modify the uploaded image.
-- Student confirmation is an ordered line list, not a full solution graph.
-- Crossed-out detection is model-assisted and still requires student review
-  when the visual evidence is uncertain.
-- Diagnosis receives the student-confirmed transcription directly.
-- Attempts exist only in frontend memory for the current page session. There is
-  no account, database, long-term storage, or image persistence after refresh.
-- Revision comparison is a lightweight heuristic over confirmed text and structured diagnoses, not simulation-grounded diagnosis.
-- Structured output validation catches malformed responses, but the analysis quality still needs manual feasibility testing with representative handwritten submissions.
-- Evaluated scope is introductory mechanics only; electromagnetism is excluded.
-- There is no arbitrary FBD reconstruction, digital-ink editor, or
-  physics-simulator integration.
-- Pilot instrumentation is suitable only for a small exploratory study.
+The earliest causal incorrect or unsupported step is prioritized. Crossed-out
+work is retained as provenance but not treated as the submitted reasoning.
+Explanations are intentionally concise and avoid repeating the same point in the
+issue card, hint, and image note.
+
+For an equation-selection error, level-one feedback states the relevant equation
+and one brief reason it applies. It does not continue through substitution,
+derivation, or the final answer.
+
+### Annotation
+
+The source image is never modified. Image and SVG overlays share one normalized
+coordinate system, so resizing and zoom transform them together.
+
+Physics vectors represent physical quantities and have semantic kinds, origins,
+directions/endpoints, labels, and confidence. They are solid, compact arrows
+drawn from the relevant physical object. Note leaders are separate, thin
+connectors between a localized target and a teacher note.
+
+Vector generation is bounded to recognizable horizontal-surface, incline,
+hanging-mass, connected-block, and basic circular-motion diagrams. Low-confidence
+geometry is not drawn; the student receives a short textual cue instead.
+
+### Student UI
+
+The pilot-derived hierarchy is intentionally preserved:
+
+- Resizable/collapsible problem and file-preview panel
+- Annotated work as the primary visual area
+- First issue and hint in a compact right-side feedback panel
+- Collapsed positive feedback below
+- Technical transcription, secondary-issue, and model notes hidden from normal
+  student view
+- Suggested next step merged into the hint
+
+### Progressive Assistance
+
+Level 1 provides concise revision guidance. Level 2 names the relevant principle
+more explicitly without solving the problem. Level 3 can unlock a separate
+worked-solution action after repeated unsuccessful revisions. A worked solution
+is never embedded in the ordinary diagnosis response.
+
+## Study Logging and Privacy
+
+Study controls are compiled into the frontend only when
+`VITE_STUDY_MODE=true`. Confirmed transcription is added to exports only when
+`VITE_STUDY_INCLUDE_TRANSCRIPTION=true` as well.
+
+Logs remain in browser memory until explicit JSON download. They include task
+metadata, problem statement, optional researcher note, timing/events, review
+counts, diagnosis metadata, annotation counts, revision outcomes, assistance
+level, worked-solution state, and safe error categories.
+
+Exports do not contain the uploaded image/PDF, base64 payload, file name, API
+key, raw model request/response, device path, IP address, cookies, or device
+fingerprint. The browser's in-memory log can be lost before export. The intended
+research convention is one export per participant task/session.
+
+## API Key Handling
+
+`OPENAI_API_KEY` is loaded only by the Node server from local environment
+files or the deployment environment. It is not exposed through a `VITE_*`
+variable or the production bundle.
+
+The settings menu also permits a tester to enter a personal key. This is a
+separate bring-your-own-key path: the value is stored only in the current tab's
+`sessionStorage` and sent in `X-OpenAI-API-Key` to the same-origin backend.
+It should be used only on a trusted deployment. The server-managed deployment
+key remains server-side.
+
+## Deployment Notes
+
+- Development: `npm run dev`; default `http://127.0.0.1:5174`
+- Production build: `npm ci --include=dev && npm run build`
+- Production start: `npm start`
+- Bind address: `0.0.0.0`
+- Port: `process.env.PORT || 5174`
+- Model: `OPENAI_MODEL || gpt-5.6-luna`
+- Health check: `/api/health`
+
+The production Node server serves `dist/`, provides SPA fallback for non-API
+GET routes, and returns JSON 404 responses for unknown API routes.
+`render.yaml` supplies nonsecret defaults and leaves `OPENAI_API_KEY` for
+manual secret entry. Luna is the cost-efficient development default; Terra can
+be selected for final evaluation or difficult cases.
+
+## Pilot Status
+
+An exploratory pilot with two participants was used for interaction and
+usability refinement. It was not designed to estimate learning effects. Do not
+make efficacy claims from this pilot or include sensitive participant details in
+the repository.
+
+## Known Limitations
+
+- Introductory mechanics scope; bounded FBD configurations only
+- Dependence on VLM transcription, reasoning, and spatial localization
+- Ambiguous/crossed-out handwriting can still require confirmation
+- Confidence thresholds reduce but do not eliminate misplaced annotations
+- No formal symbolic or simulation verification of every model claim
+- No causal learning evaluation or longitudinal deployment
+- No certification for sensitive classroom or student data
+- No teacher rubric input or full general diagram editor
 
 ## Future Work
 
-- Optional upload, photo, or screenshot of the problem statement
-- Generation of similar practice problems from a supplied problem
-- Physics animation or simulation feedback
-- Direct tablet or stylus writing
-- Animation of the physics implied by student work
-- Integration with the existing PBD simulator
-- Broader physics-domain support after mechanics evaluation
+Primary:
+
+- Conduct the full user study.
+- Compare localized graphical annotations against detached textual feedback.
+
+Secondary:
+
+- Optional upload/photo/screenshot of the problem statement
+- Similar-practice problem generation from a supplied problem
+- Physics animation or simulation-grounded feedback
+- Broader physics topics and richer diagram structures
+- Optional teacher/rubric input if a later study requires it
+
+These secondary features are not dependencies for the current research question.
+
+## Handoff Priorities
+
+1. Reproduce all automated checks and manually exercise the full workflow.
+2. Verify the OpenAI model/key configuration on a private test deployment.
+3. Freeze and record the commit/build used for each study participant.
+4. Preserve the current pilot-derived behavior while preparing the full study.
+5. Keep API keys and participant data outside version control.

@@ -253,11 +253,3 @@ export const problemBank: PracticeProblem[] = [
     studyRecommended: false,
   },
 ]
-
-export const topicLabels: Record<PracticeProblem['topic'], string> = {
-  kinematics: 'Kinematics',
-  projectile_motion: 'Projectile motion',
-  newtons_laws: "Newton's laws",
-  friction: 'Friction',
-  energy: 'Energy',
-}
