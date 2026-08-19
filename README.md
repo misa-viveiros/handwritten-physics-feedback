@@ -23,6 +23,15 @@ The current primary research question is:
 An exploratory pilot has informed the interaction design. A full user study
 addressing this question remains future work.
 
+## Demo Video
+
+A short demonstration of the full interaction workflow is available here:
+
+**[Watch the project demo on YouTube](https://youtu.be/C62HOMvJcJM)**
+
+The demo shows iterative feedback on a handwritten physics free-body diagram,
+including localized graphical annotations and step-by-step student revision.
+
 ## Key Features
 
 - Camera capture, image upload, and PDF page import
@@ -101,10 +110,16 @@ server/
   *.test.mjs                    Node test suite and annotation fixtures
 public/
   favicon.svg
+handoff/
+  tested-examples/              Handwritten examples used during manual testing
 render.yaml                     Render Web Service configuration
 .env.example                    Safe environment-variable template
 PROJECT_NOTES.md                Design decisions and research handoff notes
 ```
+
+The files in `handoff/tested-examples/` let the next researcher reproduce
+representative implementation-testing cases for the 18 preloaded problems.
+They are regression aids, not formal study data or an evaluation dataset.
 
 ## Local Setup
 
@@ -287,6 +302,11 @@ annotate/revise flow. Verify API configuration, then deploy a private test
 instance if needed. Preserve the current pilot-derived interaction behavior when
 preparing the full study, and record the exact commit and deployment build used
 for each participant. Never commit, log, or expose API keys.
+
+Use `handoff/tested-examples/` to retain intentionally created handwritten test
+inputs for representative regression checks. Keep participant work, study logs,
+recordings, transcripts, and other identifying research material outside the
+public repository.
 
 The recommended next research task is the full user study, not another feature
 expansion.

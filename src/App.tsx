@@ -1473,7 +1473,7 @@ function App() {
             <div className="panel-heading input-panel-heading">
               <div>
                 <p className="section-kicker">
-                  Attempt {attemptNumber} | Student work
+                  Attempt {attemptNumber}
                 </p>
                 <h2 id="input-heading">Problem and upload</h2>
               </div>
