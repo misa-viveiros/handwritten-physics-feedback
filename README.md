@@ -303,7 +303,7 @@ instance if needed. Preserve the current pilot-derived interaction behavior when
 preparing the full study, and record the exact commit and deployment build used
 for each participant. Never commit, log, or expose API keys.
 
-Use `handoff/tested-examples/` to retain intentionally created handwritten test
+Use `handoff/test examples/` to retain intentionally created handwritten test
 inputs for representative regression checks. Keep participant work, study logs,
 recordings, transcripts, and other identifying research material outside the
 public repository.
