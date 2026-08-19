@@ -48,20 +48,26 @@ including localized graphical annotations and step-by-step student revision.
 
 ## Interaction Workflow
 
-**Interpret -> Verify -> Diagnose -> Annotate -> Revise -> Escalate**
+**Interpret -> Verify -> Annotate -> Revise**
 
-1. **Interpret:** The model transcribes the uploaded handwriting and locates
-   visible lines or diagram elements.
-2. **Verify:** The student confirms or edits only interpretations that need
-   review; automatically accepted lines remain available for deliberate edits.
-3. **Diagnose:** The model uses the confirmed text and image context to identify
-   the earliest causal reasoning issue.
-4. **Annotate:** Sparse feedback is drawn non-destructively over the displayed
-   work while concise explanation and hint cards remain alongside it.
-5. **Revise:** The student can upload another attempt without losing earlier
-   attempts in the current browser session.
-6. **Escalate:** Assistance becomes more explicit after unsuccessful revisions;
-   a worked solution is a separate, deliberate final action.
+1. **Interpret:** The model analyzes the uploaded handwriting, equations, and
+   diagram elements to construct a structured interpretation of the student's
+   work.
+
+2. **Verify:** The student reviews and corrects uncertain interpretations before
+   feedback is generated. Automatically accepted interpretations can still be
+   edited if needed.
+
+3. **Annotate:** Using the confirmed interpretation and image context, the system
+   identifies a substantive reasoning issue and places sparse, localized textual
+   or graphical feedback directly on the relevant part of the student's work.
+   Concise explanation and hint cards remain available alongside the annotation.
+
+4. **Revise:** The student updates the solution and uploads another attempt. The
+   revised work is interpreted again, creating an iterative feedback loop.
+   If the same issue remains unresolved across multiple revisions, the system can
+   gradually provide more explicit guidance, with a worked solution available as
+   a separate final action.
 
 ## Supported Physics Scope
 
